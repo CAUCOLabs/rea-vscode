@@ -5,7 +5,7 @@ export class ReaMcpClient {
   private client: Client | undefined;
   private transport: StdioClientTransport | undefined;
 
-  async connect(scriptPath: string): Promise<void> {
+  async connect(command: string, args: string[]): Promise<void> {
     if (this.client) {
       throw new Error('REA is already connected.');
     }
@@ -16,8 +16,8 @@ export class ReaMcpClient {
     });
 
     const transport = new StdioClientTransport({
-      command: 'node',
-      args: [scriptPath, 'mcp'],
+      command,
+      args,
       stderr: 'pipe'
     });
 

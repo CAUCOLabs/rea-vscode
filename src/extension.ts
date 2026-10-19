@@ -2,8 +2,10 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 
 import { ReaMcpClient } from './mcp/client';
+import { ConnectionManager } from './services/connectionManager';
 
 const rea = new ReaMcpClient();
+const connectionManager = new ConnectionManager(rea);
 
 let output: vscode.OutputChannel;
 
@@ -16,7 +18,7 @@ export function activate(context: vscode.ExtensionContext) {
     'rea.connect',
     async () => {
       try {
-        if (rea.isConnected()) {
+        if (connectionManager.isConnected()) {
           vscode.window.showInformationMessage(
             'REA is already connected.'
           );
@@ -25,16 +27,25 @@ export function activate(context: vscode.ExtensionContext) {
 
         const config = vscode.workspace.getConfiguration('rea');
 
-        let scriptPath = config.get<string>('scriptPath', '');
+        const scriptPath = config.get<string>('scriptPath', '').trim();
+        const executable = config.get<string>('executable', 'node').trim();
 
-        if (!scriptPath) {
-          scriptPath = path.resolve(
-            context.extensionPath,
-            '../rea/scripts/rea.mjs'
-          );
+        if (!executable) {
+          throw new Error('REA executable cannot be empty.');
         }
 
-        output.appendLine(`Connecting to REA: ${scriptPath}`);
+        if (scriptPath && !path.isAbsolute(scriptPath)) {
+          throw new Error('REA scriptPath must be an absolute path.');
+        }
+
+        const command = scriptPath ? executable : 'npx';
+        const args = scriptPath
+          ? [scriptPath, 'mcp']
+          : ['--no-install', 'rea-agents', 'mcp'];
+
+        output.appendLine(
+          `Connecting to REA: ${command} ${args.join(' ')}`
+        );
 
         await vscode.window.withProgress(
           {
@@ -43,7 +54,7 @@ export function activate(context: vscode.ExtensionContext) {
             cancellable: false
           },
           async () => {
-            await rea.connect(scriptPath);
+            await connectionManager.connect(command, args);
           }
         );
 
@@ -97,7 +108,7 @@ export function activate(context: vscode.ExtensionContext) {
     'rea.disconnect',
     async () => {
       try {
-        await rea.disconnect();
+        await connectionManager.disconnect();
 
         output.appendLine('REA MCP server disconnected.');
 
@@ -121,5 +132,5 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export async function deactivate() {
-  await rea.disconnect();
+  await connectionManager.disconnect();
 }
