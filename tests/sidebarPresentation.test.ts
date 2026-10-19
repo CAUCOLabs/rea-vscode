@@ -35,7 +35,7 @@ class Node {
 function descendants(node: Node): Node[] { return node.children.flatMap(child => [child, ...descendants(child)]); }
 
 function setup() {
-  const ids = ['connect', 'disconnect', 'refresh', 'execute', 'detail', 'name', 'description', 'schema', 'parameters', 'search', 'count', 'tools', 'status', 'notice', 'result', 'result-status', 'original-response', 'original-section', 'expand-all', 'collapse-all', 'execution-policy', 'parameter-error', 'target-url', 'cdp-endpoint', 'analyze-target', 'export-report', 'analysis-progress', 'analysis-meter', 'analysis-findings', 'reconstruction-spec', 'evidence-summary', 'web-analyzer', 'target-web', 'target-github', 'target-desktop', 'coming-soon', 'connection-indicator', 'reconnect', 'open-setup', 'prepare-reconstruction', 'view-analysis', 'analysis-results', 'preparation-status', 'analysis-detail-panel', 'human-findings', 'component-summary', 'interaction-summary', 'resource-summary', 'missing-summary', 'report-target', 'analysis-status', 'report-readiness'];
+  const ids = ['create-reconstruction', 'screenshot-preview', 'connect', 'disconnect', 'refresh', 'execute', 'detail', 'name', 'description', 'schema', 'parameters', 'search', 'count', 'tools', 'status', 'notice', 'result', 'result-status', 'original-response', 'original-section', 'expand-all', 'collapse-all', 'execution-policy', 'parameter-error', 'target-url', 'cdp-endpoint', 'analyze-target', 'export-report', 'analysis-progress', 'analysis-meter', 'analysis-findings', 'reconstruction-spec', 'evidence-summary', 'web-analyzer', 'target-web', 'target-github', 'target-desktop', 'coming-soon', 'connection-indicator', 'reconnect', 'open-setup', 'prepare-reconstruction', 'view-analysis', 'analysis-results', 'preparation-status', 'analysis-detail-panel', 'human-findings', 'component-summary', 'interaction-summary', 'resource-summary', 'missing-summary', 'report-target', 'analysis-status', 'report-readiness'];
   const nodes = Object.fromEntries(ids.map(id => [id, new Node('div')]));
   const sent: unknown[] = [];
   const receivers: Array<(event: { data: unknown }) => void> = [];
@@ -291,4 +291,20 @@ describe('Simple REA application experience', () => {
     expect(nodes['prepare-reconstruction'].disabled).toBe(true);
     expect(nodes['analysis-status'].textContent).toBe('Analysis incomplete');
   });
+});
+
+it('renders the screenshot with provenance and exposes creation only after preparation', () => {
+  const { nodes, send, sent } = setup();
+  send({ type: 'status', trusted: true, state: 'connected', busy: false });
+  const report = { target: 'http://127.0.0.1:3000/', status: 'captured', findings: [], screenshot: { dataBase64: 'iVBORw==', evidenceId: 'ev_capture', sha256: 'digest', width: 1280, height: 720 } };
+  send({ type: 'analysisReport', report, presentation: { status: 'Page inspected', readiness: '', canPrepare: true, components: [], interactions: [], resources: [], missing: [] } });
+  expect(descendants(nodes['screenshot-preview']).find(n => n.tag === 'img')?.attributes.src).toBe('data:image/png;base64,iVBORw==');
+  expect(nodes['screenshot-preview'].textContent).toContain('ev_capture');
+  expect(nodes['create-reconstruction'].hidden).toBe(true);
+  send({ type: 'reconstructionPrepared', specification: 'brief' });
+  nodes['create-reconstruction'].click();
+  expect(sent).toContainEqual({ type: 'createReconstructionProject' });
+  send({ type: 'analysisReport', report: { ...report, screenshot: undefined, findings: [{ area: 'Visual evidence', classification: 'UNKNOWN', detail: 'Screenshot failed: Timeout' }] } });
+  expect(descendants(nodes['screenshot-preview']).some(n => n.tag === 'img')).toBe(false);
+  expect(nodes['screenshot-preview'].textContent).toContain('Timeout');
 });

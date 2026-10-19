@@ -94,7 +94,7 @@
     toolGroups = [];
     for (const group of groups) {
       const section = element('details');
-      section.open = expansion.get(group.name) ?? Boolean(query);
+      section.open = expansion.get(group.name) ?? false;
       section.addEventListener('toggle', () => expansion.set(group.name, section.open));
       section.className = 'tool-group';
       toolGroups.push([section, group.name]);

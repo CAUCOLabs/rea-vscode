@@ -16,10 +16,13 @@ const mocks = vi.hoisted(() => ({
   beforeProgress: undefined as (() => void) | undefined,
   provider: undefined as any,
   saveDialog: vi.fn(),
+  openDialog: vi.fn(),
+  createProject: vi.fn(),
   writeFile: vi.fn(),
   startBrowser: vi.fn(),
   closeBrowser: vi.fn(),
 }));
+vi.mock('../src/analysis/reconstructionProject', () => ({ createReconstructionProject: mocks.createProject }));
 vi.mock('../src/services/analysisBrowser', () => ({ AnalysisBrowserError: class extends Error {}, startAnalysisBrowser: mocks.startBrowser }));
 vi.mock('vscode', () => ({
   workspace: {
@@ -32,6 +35,7 @@ vi.mock('vscode', () => ({
   Uri: { joinPath: (_base: unknown, ...parts: string[]) => parts.join('/') },
   window: {
     showSaveDialog: mocks.saveDialog,
+    showOpenDialog: mocks.openDialog,
     createOutputChannel: () => ({ appendLine: mocks.log, show() {}, dispose() {} }),
     showWarningMessage: mocks.warning, showErrorMessage: mocks.error, showInformationMessage: mocks.info,
     withProgress: async (_options: unknown, task: () => unknown) => { mocks.beforeProgress?.(); return task(); },
@@ -68,6 +72,8 @@ beforeEach(() => {
   mocks.startBrowser.mockImplementation(async (options: { url: string }) => ({ endpoint: 'http://127.0.0.1:9222', target: options.url, close: mocks.closeBrowser }));
   mocks.closeBrowser.mockResolvedValue(undefined);
   mocks.saveDialog.mockResolvedValue('chosen-report.md');
+  mocks.openDialog.mockResolvedValue([{ fsPath: '/chosen/parent' }]);
+  mocks.createProject.mockResolvedValue('/chosen/parent/rea-reconstruction-new');
   mocks.writeFile.mockResolvedValue(undefined);
   mocks.launch.mockResolvedValue(undefined);
   mocks.callTool.mockResolvedValue({ content: [{ type: 'text', text: 'No unknowns' }] });
@@ -211,10 +217,20 @@ describe('Web analyzer host workflow and export', () => {
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'analysisReport', report: expect.objectContaining({ status: 'captured' }) })));
     expect(mocks.startBrowser).toHaveBeenCalledWith(expect.objectContaining({ url: webTarget, allowed: expect.any(Function) }));
     expect(mocks.closeBrowser).toHaveBeenCalledOnce();
-    expect(mocks.callTool.mock.calls.map(([request]) => request.name)).toEqual(['list_browser_targets', 'inspect_web_page', 'analyze_web_bundle']);
+    expect(mocks.callTool.mock.calls.map(([request]) => request.name)).toEqual(['list_browser_targets', 'inspect_web_page', 'capture_web_screenshot', 'analyze_web_bundle']);
     receive({ type: 'prepareReconstruction' });
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'reconstructionPrepared', specification: expect.stringContaining('Proposed application structure') })));
-    expect(mocks.callTool).toHaveBeenCalledTimes(3);
+    receive({ type: 'createReconstructionProject', destination: '/injected' });
+    expect(mocks.openDialog).not.toHaveBeenCalled();
+    receive({ type: 'createReconstructionProject' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'projectCreated', message: expect.stringContaining('Starter project created') })));
+    expect(mocks.openDialog).toHaveBeenCalledWith(expect.objectContaining({ canSelectFolders: true, canSelectFiles: false }));
+    expect(mocks.createProject).toHaveBeenCalledWith('/chosen/parent', expect.objectContaining({ status: 'captured', screenshot: expect.objectContaining({ dataBase64: expect.stringContaining('iVBOR') }) }), expect.stringMatching(/^rea-reconstruction-/));
+    mocks.openDialog.mockResolvedValueOnce(undefined);
+    receive({ type: 'createReconstructionProject' });
+    await vi.waitFor(() => expect(mocks.openDialog).toHaveBeenCalledTimes(2));
+    expect(mocks.createProject).toHaveBeenCalledOnce();
+    expect(mocks.callTool).toHaveBeenCalledTimes(4);
     const inspection = mocks.callTool.mock.calls[1];
     expect(inspection[0].arguments).toMatchObject({ observation_ms: 500, include_accessibility_text: true, include_console_text: false, include_json_body_shapes: false, include_script_sources: false });
     expect(inspection[2]).toMatchObject({ timeout: 20_000, maxTotalTimeout: 25_000 });

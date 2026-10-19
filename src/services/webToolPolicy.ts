@@ -1,7 +1,7 @@
 // These three operations were reviewed in REA 6.7.0 browserToolContracts,
 // browserObservation and webBundleAnalysis. Passive toward the page; REA
 // records Evidence and accesses CDP, so its readOnlyHint is intentionally false.
-export const WEB_TOOLS = ['list_browser_targets', 'inspect_web_page', 'analyze_web_bundle'] as const;
+export const WEB_TOOLS = ['list_browser_targets', 'inspect_web_page', 'analyze_web_bundle', 'capture_web_screenshot'] as const;
 export type WebTool = typeof WEB_TOOLS[number];
 export const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 export const CDP_SETUP = 'Start a separate Chromium profile with --remote-debugging-port=9222 and --user-data-dir pointing to a dedicated profile. Open the exact target URL manually. This analyzer accepts only an HTTP CDP discovery endpoint on literal 127.0.0.1 or [::1] with an explicit port (default http://127.0.0.1:9222). No navigation or browser launch is performed.';
@@ -24,6 +24,10 @@ export function webArguments(name: WebTool, endpoint: string, origin: string, id
   if (parsedOrigin.origin !== origin) throw new Error('One exact target origin is required.');
   const base = { cdp_endpoint: cdp, allowed_origins: [origin] };
   if (name === 'list_browser_targets') return base;
+  if (name === 'capture_web_screenshot') {
+    if (!id || id.length > 256 || /[\x00-\x1f]/.test(id)) throw new Error('Invalid browser target identifier.');
+    return { ...base, target_id: id };
+  }
   if (!id || id.length > 256 || /[\x00-\x1f]/.test(id)) throw new Error('Invalid browser target identifier.');
   const flags = { ...base, target_id: id, observation_ms: 500,
     include_accessibility_text: true, include_console_text: false,

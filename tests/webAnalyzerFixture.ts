@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import type { WebTool } from '../src/services/webToolPolicy';
 export const webTarget = 'https://app.example.test/';
+const screenshotBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PzWvWQAAAABJRU5ErkJggg==', 'base64');
 const common = {
   cdp_endpoint: { type: 'string', minLength: 1 },
   allowed_origins: { type: 'array', items: { type: 'string', minLength: 1 } }
@@ -20,7 +22,8 @@ const schema = (properties: object, required: string[]) => ({ type: 'object', pr
 export const webSchemas = {
   list_browser_targets: schema(common, ['cdp_endpoint']),
   inspect_web_page: { ...schema(capture, ['cdp_endpoint', 'target_id']), minProperties: 2 },
-  analyze_web_bundle: schema({ ...capture, include_script_sources: { type: 'boolean', default: true }, fetch_source_maps: { type: 'boolean', default: false } }, ['cdp_endpoint', 'target_id'])
+  analyze_web_bundle: schema({ ...capture, include_script_sources: { type: 'boolean', default: true }, fetch_source_maps: { type: 'boolean', default: false } }, ['cdp_endpoint', 'target_id']),
+  capture_web_screenshot: schema({ ...common, target_id: { type: 'string', minLength: 1 } }, ['cdp_endpoint', 'allowed_origins', 'target_id'])
 };
 export const discovery = { targets: [{ target_id: 'page-1', type: 'page', title: 'Example', url: webTarget, origin: new URL(webTarget).origin }] };
 export const page = {
@@ -48,5 +51,5 @@ export function evidenceResult(tool: WebTool, data: unknown) {
   return { content: [{ type: 'text', text: JSON.stringify({ evidence_id: `ev_${digit.repeat(64)}`, operation: tool, confidence: 'observed', normalized_result: data }) }] };
 }
 export function webResponse(tool: WebTool) {
-  return evidenceResult(tool, tool === 'list_browser_targets' ? discovery : tool === 'inspect_web_page' ? page : bundle);
+  return evidenceResult(tool, tool === 'list_browser_targets' ? discovery : tool === 'inspect_web_page' ? page : tool === 'analyze_web_bundle' ? bundle : { target: { target_id: 'page-1', url: webTarget, origin: new URL(webTarget).origin }, captured_at: '2026-01-01T00:00:00Z', viewport: { width: 1280, height: 720 }, artifact: { sha256: createHash('sha256').update(screenshotBytes).digest('hex'), bytes: screenshotBytes.length, media_type: 'image/png', data_base64: screenshotBytes.toString('base64') }, completeness: { status: 'complete' }, limitations: [] });
 }

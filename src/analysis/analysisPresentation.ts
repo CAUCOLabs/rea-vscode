@@ -37,9 +37,9 @@ export function presentAnalysis(report: WebReport): AnalysisPresentation {
   const captured = report.status === 'captured';
   const canPrepare = captured && components.length > 0;
   const missing = captured ? [
-    'Clicks, forms and navigation behavior have not been tested.',
+    'Navigation declarations are observed, but clicks, forms and component behavior have not been tested; this workflow has no authorized interaction tool.',
     'Backend logic, private features and complete data requirements are unknown.',
-    'Visual styling, responsive layouts and accessibility still need review.',
+    report.screenshot ? 'A verified screenshot of one viewport is available in Analysis details; geometry, computed styles and additional viewport sizes remain unknown.' : 'No verified screenshot is available. See Analysis details for the capture diagnostic; visual layout remains unknown.',
     'This is a limited snapshot; network activity and some resources may be missing.'
   ] : ['The website was not inspected. Retry; if this continues, check setup in Advanced. No reconstruction claims can be made.'];
   if (report.findings.some(f => f.area === 'Redirect')) missing.push('The website redirected. Only the final page was inspected.');

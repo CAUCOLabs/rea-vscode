@@ -1,3 +1,4 @@
+import { createReconstructionProject } from '../analysis/reconstructionProject';
 import * as vscode from 'vscode';
 import { presentAnalysis } from '../analysis/analysisPresentation';
 import { startAnalysisBrowser, AnalysisBrowserError, type BrowserLease } from '../services/analysisBrowser';
@@ -57,7 +58,7 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
     const style = view.webview.asWebviewUri(vscode.Uri.joinPath(media, 'sidebar.css'));
     view.webview.html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}'; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none';">
 <link rel="stylesheet" href="${style}"><title>REA</title></head><body>
 <header class="brand"><span class="brand-mark" aria-hidden="true">R</span><div><h1>REA</h1><p>Understand a website.<br>Plan your own implementation.</p></div></header>
 <div class="connection-row"><span id="connection-indicator" role="status">Starting REA…</span><button id="reconnect" class="text-button" hidden>Reconnect</button></div>
@@ -75,16 +76,16 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
 <div class="result-card"><h3>Resources and technologies</h3><ul id="resource-summary"></ul></div>
 <div class="result-card"><h3>Missing information</h3><ul id="missing-summary"></ul></div>
 <div class="result-actions"><button id="view-analysis" aria-expanded="false">View Analysis</button><button id="export-report" disabled>Export Report</button><button id="prepare-reconstruction" disabled>Prepare Reconstruction</button></div>
-<p id="preparation-status" role="status"></p><section id="analysis-detail-panel" hidden aria-label="Analysis details"><h3>Analysis details</h3><div id="human-findings"></div></section>
+<button id="create-reconstruction" hidden disabled>Create Reconstruction Project</button><p id="preparation-status" role="status"></p><section id="analysis-detail-panel" hidden aria-label="Analysis details"><h3>Analysis details</h3><div id="screenshot-preview"></div><div id="human-findings"></div></section>
 </section></section>
 <details id="advanced-explorer"><summary>Advanced / Developer Tools</summary>
 <p id="status" role="status">Disconnected</p><div class="actions"><button id="connect">Connect</button><button id="disconnect" disabled>Disconnect</button><button id="refresh" disabled>Refresh tools</button><button id="open-setup">Open REA Settings</button></div><p id="notice" role="status"></p>
 <details><summary>Browser connection details</summary><p>REA creates a dedicated temporary browser for each analysis. Personal profiles and arbitrary endpoints are never attached.</p><label for="cdp-endpoint">Managed connection</label><input id="cdp-endpoint" readonly value="Not running"></details>
 <details><summary>Evidence and diagnostics</summary><p id="evidence-summary">No analysis yet.</p><div id="analysis-findings"></div></details>
-<details><summary>Coding brief preview</summary><pre id="reconstruction-spec">Prepare a reconstruction brief after analyzing.</pre></details><h3>Tool Explorer</h3><section class="navigation" aria-label="Tool navigation"><label for="search">Search tools</label><input id="search" type="search" placeholder="Name or description">
+<details><summary>Coding brief preview</summary><pre id="reconstruction-spec">Prepare a reconstruction brief after analyzing.</pre></details><details><summary>Tool Explorer</summary><section class="navigation" aria-label="Tool navigation"><label for="search">Search tools</label><input id="search" type="search" placeholder="Name or description">
 <div class="actions navigation-controls"><button id="expand-all">Expand All</button><button id="collapse-all">Collapse All</button></div><p id="count"></p><p class="hint">Grouped by literal name prefix, not by permissions.</p><div id="tools" aria-label="Tools" tabindex="0"></div></section>
 <section id="detail" hidden><h3 id="name"></h3><details id="tool-description"><summary>Description</summary><p id="description"></p></details><h4>Input parameters</h4><div id="parameters"></div><details><summary>Raw JSON Schema</summary><pre id="schema"></pre></details>
-<p id="execution-policy" class="hint"></p><p id="parameter-error" role="alert"></p><button id="execute" hidden disabled>Run read-only query</button><p class="hint">Only list_unknowns is authorized. Page size is limited to 100; omitted offset/limit use 0/50. Parameters are not persisted.</p></section>
+<p id="execution-policy" class="hint"></p><p id="parameter-error" role="alert"></p><button id="execute" hidden disabled>Run read-only query</button><p class="hint">Only list_unknowns is authorized. Page size is limited to 100; omitted offset/limit use 0/50. Parameters are not persisted.</p></section></details>
 <h3>Result</h3><p id="result-status" role="status">No result yet.</p><div id="result"></div><details id="original-section" hidden><summary>Original MCP response (redacted; output limit applies)</summary><pre id="original-response"></pre></details>
 </details><script nonce="${nonce}" src="${model}"></script><script nonce="${nonce}" src="${script}"></script><script nonce="${nonce}" src="${analyzerScript}"></script></body></html>`;
     const receiver = view.webview.onDidReceiveMessage((message: unknown) => { void this.receive(message); });
@@ -199,6 +200,19 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
           this.analysisReport.specification = reconstructionSpec(this.analysisReport);
           this.analysisReport.markdown = exportWebReport(this.analysisReport);
           this.send({ type: 'reconstructionPrepared', specification: this.analysisReport.specification });
+          break;
+        }
+        case 'createReconstructionProject': {
+          const report = this.analysisReport;
+          if (!report || !vscode.workspace.isTrusted || !presentAnalysis(report).canPrepare) break;
+          const selection = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Choose parent folder' });
+          if (!selection?.[0] || !vscode.workspace.isTrusted) break;
+          try {
+            const destination = await createReconstructionProject(selection[0].fsPath, report, `rea-reconstruction-${randomBytes(6).toString('hex')}`);
+            this.send({ type: 'projectCreated', message: `Starter project created: ${destination}. Open index.html. Controls and backend remain unverified.` });
+          } catch {
+            this.send({ type: 'projectCreated', message: 'Project creation failed. Existing files were not overwritten. Choose a writable folder and retry.' });
+          }
           break;
         }
         case 'exportWebReport': {

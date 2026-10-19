@@ -2,12 +2,15 @@
   const api = globalThis.reaSidebarApi;
   const byId = id => document.getElementById(id);
   let trusted = false, connected = false, busy = false, reportAvailable = false;
+  let prepared = false;
   let canPrepare = false, type = 'web', presentation, hasAnalysisFeedback = false;
   const targetButtons = { web: 'target-web', github: 'target-github', desktop: 'target-desktop' };
   function buttons() {
     byId('analyze-target').disabled = !trusted || !connected || busy || type !== 'web';
     byId('export-report').disabled = !trusted || !reportAvailable || busy;
     byId('prepare-reconstruction').disabled = !trusted || !canPrepare || busy;
+    byId('create-reconstruction').hidden = !prepared;
+    byId('create-reconstruction').disabled = !trusted || !canPrepare || !prepared || busy;
     byId('target-url').disabled = busy || type !== 'web';
     byId('reconnect').disabled = busy || !trusted;
     for (const id of Object.values(targetButtons)) byId(id).disabled = busy;
@@ -22,6 +25,7 @@
     if (items.length > limit) byId(id).append(node('li', `+ ${items.length - limit} more in View Analysis`));
   }
   function reset() {
+    prepared = false; byId('screenshot-preview').replaceChildren();
     reportAvailable = false; canPrepare = false; presentation = undefined; hasAnalysisFeedback = false;
     byId('evidence-summary').textContent = 'No analysis yet.';
     byId('analysis-findings').replaceChildren();
@@ -59,6 +63,7 @@
   byId('target-url').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); byId('analyze-target').click(); } });
   byId('export-report').addEventListener('click', () => { if (trusted && reportAvailable && !busy) api.postMessage({ type: 'exportWebReport' }); });
   byId('prepare-reconstruction').addEventListener('click', () => { if (trusted && canPrepare && !busy) api.postMessage({ type: 'prepareReconstruction' }); });
+  byId('create-reconstruction').addEventListener('click', () => { if (trusted && canPrepare && prepared && !busy) api.postMessage({ type: 'createReconstructionProject' }); });
   byId('view-analysis').addEventListener('click', () => {
     const open = byId('analysis-detail-panel').hidden;
     byId('analysis-detail-panel').hidden = !open;
@@ -100,7 +105,9 @@
         byId('analysis-meter').hidden = !busy || message.percent === 0;
         break;
       case 'browserDetails': byId('cdp-endpoint').value = message.endpoint; break;
+      case 'projectCreated': byId('preparation-status').textContent = message.message; break;
       case 'reconstructionPrepared':
+        prepared = true; buttons();
         byId('reconstruction-spec').textContent = message.specification;
         byId('preparation-status').textContent = 'Your coding-agent brief is ready. Export Report includes it. Review missing information before coding.';
         break;
@@ -115,6 +122,15 @@
         byId('evidence-summary').textContent = `${report.target} — ${report.status}. ${report.summary}`;
         byId('reconstruction-spec').textContent = report.specification;
         renderHumanReport(presentation);
+        prepared = false;
+        const preview = byId('screenshot-preview'); preview.replaceChildren();
+        const image = report.screenshot;
+        if (image && typeof image.dataBase64 === 'string' && image.dataBase64.length <= 20000000 && /^[A-Za-z0-9+/]+={0,2}$/.test(image.dataBase64)) {
+          const img = node('img', ''); img.setAttribute('src', `data:image/png;base64,${image.dataBase64}`); img.setAttribute('alt', 'Verified captured viewport');
+          preview.append(img, node('p', `${image.width} × ${image.height}px · capture_web_screenshot · ${image.evidenceId} · normalized_result.artifact · PNG SHA-256 ${image.sha256} · Evidence digest ${image.digest}`));
+        } else {
+          preview.append(node('p', report.findings.filter(f => f.area === 'Visual evidence' && f.classification === 'UNKNOWN').map(f => f.detail).join(' ') || 'No verified screenshot available.'));
+        }
         // Full provenance stays available only inside Advanced.
         byId('analysis-findings').replaceChildren();
         for (const classification of ['OBSERVED','INFERRED','UNKNOWN']) {

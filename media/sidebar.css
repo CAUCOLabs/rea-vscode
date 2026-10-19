@@ -73,3 +73,6 @@ body { padding: 16px; }
 #advanced-explorer > summary { color: var(--vscode-descriptionForeground); font-weight: normal; }
 #human-findings p { line-height: 1.6; overflow-wrap: anywhere; }
 @media (max-width: 240px) { .target-options { grid-template-columns: 1fr; } .brand { align-items: flex-start; } .result-actions { flex-direction: column; } }
+
+#screenshot-preview img { max-width:100%; height:auto; }
+#screenshot-preview p { overflow-wrap:anywhere; }
