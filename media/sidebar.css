@@ -12,3 +12,22 @@ input { box-sizing: border-box; width: 100%; padding: 6px; margin-top: 6px; colo
 .tool span { margin-top: 4px; font-size: .9em; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px; background: var(--vscode-textCodeBlock-background); max-height: 40vh; overflow-y: auto; }
 #notice { color: var(--vscode-descriptionForeground); } label { display: block; }
+/* Compact catalog with selection independent of keyboard focus. */
+.tool-group { margin-bottom: 8px; }
+summary { cursor: pointer; padding: 5px 0; }
+summary:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+.tool { padding: 4px 7px; margin-bottom: 1px; background: transparent; overflow-wrap: anywhere; }
+.tool:hover { background: var(--vscode-list-hoverBackground); }
+.tool.selected { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); border-color: var(--vscode-focusBorder); }
+.hint { font-size: .9em; color: var(--vscode-descriptionForeground); }
+#description { white-space: pre-wrap; overflow-wrap: anywhere; }
+#parameters { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: .95em; }
+th, td { border: 1px solid var(--vscode-panel-border); padding: 6px; text-align: left; vertical-align: top; white-space: pre-wrap; overflow-wrap: anywhere; }
+td p { margin: 0 0 5px; }
+.data-tree { margin: 4px 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.data-tree dt { font-weight: bold; }
+.data-tree dd { margin: 2px 0 8px 12px; }
+#result { max-height: 45vh; overflow: auto; }
+.result-success { border-left: 3px solid var(--vscode-testing-iconPassed, currentColor); padding-left: 8px; }
+.result-error { color: var(--vscode-errorForeground); border-left: 3px solid currentColor; padding-left: 8px; }

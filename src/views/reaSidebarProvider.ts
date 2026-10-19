@@ -35,6 +35,7 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
     const media = vscode.Uri.joinPath(this.extensionUri, 'media');
     view.webview.options = { enableScripts: true, localResourceRoots: [media] };
     const nonce = randomBytes(24).toString('hex');
+    const model = view.webview.asWebviewUri(vscode.Uri.joinPath(media, 'sidebarModel.js'));
     const script = view.webview.asWebviewUri(vscode.Uri.joinPath(media, 'sidebar.js'));
     const style = view.webview.asWebviewUri(vscode.Uri.joinPath(media, 'sidebar.css'));
     view.webview.html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
@@ -45,11 +46,11 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
 <div class="actions"><button id="connect">Connect</button><button id="disconnect" disabled>Disconnect</button><button id="refresh" disabled>Refresh tools</button></div>
 <p id="notice" role="status"></p>
 <label for="search">Search tools</label><input id="search" type="search" placeholder="Name or description">
-<p id="count"></p><div id="tools" aria-label="Tools"></div>
-<section id="detail" hidden><h3 id="name"></h3><p id="description"></p><h4>Input schema</h4><pre id="schema"></pre>
+<p id="count"></p><p class="hint">Grouped by literal name prefix, not by permissions.</p><div id="tools" aria-label="Tools"></div>
+<section id="detail" hidden><h3 id="name"></h3><p id="description"></p><h4>Input parameters</h4><div id="parameters"></div><details><summary>Raw JSON Schema</summary><pre id="schema"></pre></details>
 <button id="execute" disabled>Run read-only query (first 50)</button><p>Only list_unknowns can run in this MVP. Arguments are fixed: offset 0, limit 50.</p></section>
-<h3>Result</h3><pre id="result" aria-live="polite">No result yet.</pre>
-<script nonce="${nonce}" src="${script}"></script></body></html>`;
+<h3>Result</h3><p id="result-status" role="status">No result yet.</p><div id="result"></div><details id="original-section" hidden><summary>Original MCP response (redacted; output limit applies)</summary><pre id="original-response"></pre></details>
+<script nonce="${nonce}" src="${model}"></script><script nonce="${nonce}" src="${script}"></script></body></html>`;
     const receiver = view.webview.onDidReceiveMessage((message: unknown) => { void this.receive(message); });
     const disposal = view.onDidDispose(() => {
       receiver.dispose();
@@ -88,6 +89,7 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
     this.busy = true;
     this.updateStatus();
     this.send({ type: 'notice', text: '' });
+    const operationGeneration = this.generation;
     try {
       switch (message.type) {
         case 'ready': case 'refresh': await this.refresh(); break;
@@ -106,15 +108,19 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
             return;
           }
           const generation = this.generation;
+          this.send({ type: 'result', text: '', pending: true });
           const result = await this.client.executeReadOnlyTool(READ_ONLY_TOOL);
           if (generation === this.generation && this.manager.isConnected() && vscode.workspace.isTrusted) {
-            this.send({ type: 'result', text: resultText(result) });
+            this.send({ type: 'result', text: resultText(result), isError: result.isError === true });
             this.send({ type: 'notice', text: result.isError ? 'REA returned a tool error. See the result.' : 'Read-only query completed.' });
           }
           break;
         }
       }
     } catch {
+      if (message.type === 'execute' && operationGeneration === this.generation && this.manager.isConnected() && vscode.workspace.isTrusted) {
+        this.send({ type: 'result', text: resultText({ isError: true, content: [{ type: 'text', text: 'REA query failed. Check the connection and retry.' }] }), isError: true });
+      }
       this.send({ type: 'notice', text: 'REA operation failed. Check the connection and server configuration, then retry.' });
     } finally {
       this.busy = false;

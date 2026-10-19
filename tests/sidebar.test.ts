@@ -120,6 +120,8 @@ describe('Sidebar vertical slice', () => {
     const { receive, postMessage, webview } = await view();
     expect(webview.html).toContain("default-src 'none'");
     expect(webview.html).toContain("connect-src 'none'");
+    expect(webview.html).toContain("<details><summary>Raw JSON Schema</summary>");
+    expect(webview.html).toContain("Original MCP response (redacted; output limit applies)");
     receive({ type: 'connect' });
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'tools', tools: expect.arrayContaining([expect.objectContaining({ name: 'list_unknowns', executable: true })]) })));
     receive({ type: 'execute', name: 'open_binary' });
@@ -129,6 +131,17 @@ describe('Sidebar vertical slice', () => {
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'result', text: expect.stringContaining('No unknowns') })));
     receive({ type: 'disconnect' });
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith({ type: 'tools', tools: [] }));
+  });
+  it.each(['tool', 'transport'])('reports a %s error without forwarding raw exception details', async (kind) => {
+    await activate();
+    const { receive, postMessage } = await view();
+    receive({ type: 'connect' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'tools', tools: expect.arrayContaining([expect.objectContaining({ name: 'list_unknowns' })]) })));
+    if (kind === 'tool') mocks.callTool.mockResolvedValueOnce({ isError: true, content: [{ type: 'text', text: 'Tool query failed' }] });
+    else mocks.callTool.mockRejectedValueOnce(new Error('Sensitive internal exception'));
+    receive({ type: 'execute' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'result', isError: true })));
+    expect(JSON.stringify(postMessage.mock.calls)).not.toContain('Sensitive internal exception');
   });
   it('blocks Webview execution without workspace trust', async () => {
     await activate();
