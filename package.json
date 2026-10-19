@@ -1,0 +1,90 @@
+{
+  "name": "rea-vscode",
+  "version": "0.1.0",
+  "description": "Integrate REA reverse engineering and automation tools into Visual Studio Code through MCP.",
+  "main": "./dist/extension.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "package": "npm run build && vsce package"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CAUCOLabs/rea-vscode.git"
+  },
+  "keywords": [
+    "rea",
+    "reverse-engineering",
+    "mcp",
+    "automation",
+    "vscode"
+  ],
+  "author": "CAUCOLabs",
+  "license": "MIT",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/CAUCOLabs/rea-vscode/issues"
+  },
+  "homepage": "https://github.com/CAUCOLabs/rea-vscode#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/vscode": "^1.140.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  },
+  "displayName": "REA for VS Code",
+  "publisher": "CAUCOLabs",
+  "private": true,
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:rea.connect",
+    "onCommand:rea.listTools",
+    "onCommand:rea.disconnect"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "rea.connect",
+        "title": "REA: Connect"
+      },
+      {
+        "command": "rea.listTools",
+        "title": "REA: List Tools"
+      },
+      {
+        "command": "rea.disconnect",
+        "title": "REA: Disconnect"
+      }
+    ],
+    "configuration": {
+      "title": "REA",
+      "properties": {
+        "rea.executable": {
+          "type": "string",
+          "default": "node",
+          "description": "Executable used to launch the REA MCP server."
+        },
+        "rea.scriptPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path to the REA CLI script."
+        }
+      }
+    }
+  }
+}
