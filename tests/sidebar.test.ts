@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readOnlySchema } from './readOnlyFixture';
 import { parseSidebarMessage, redact, resultText } from '../src/views/sidebarProtocol';
 
 const mocks = vi.hoisted(() => ({
@@ -41,7 +42,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
     connect = mocks.launch;
     callTool = mocks.callTool;
     listTools = vi.fn(async () => ({ tools: [
-      { name: 'list_unknowns', description: 'Read session records', inputSchema: { type: 'object' } },
+      { name: 'list_unknowns', description: 'Read session records', inputSchema: readOnlySchema },
       { name: 'open_binary', description: 'Open target', inputSchema: { type: 'object' } }
     ] }));
     close = vi.fn(async () => {});
@@ -107,7 +108,10 @@ describe('Workspace Trust and MCP boundary', () => {
     const { ReaMcpClient } = await import('../src/mcp/client');
     const client = new ReaMcpClient();
     await client.connect('node', []);
+    await client.listTools();
     await expect(client.executeReadOnlyTool('open_binary')).rejects.toThrow('not allowed');
+    expect(mocks.callTool).not.toHaveBeenCalled();
+    await expect(client.executeReadOnlyTool('list_unknowns', { limit: 101 })).rejects.toThrow('allowed range');
     expect(mocks.callTool).not.toHaveBeenCalled();
     await client.executeReadOnlyTool('list_unknowns');
     expect(mocks.callTool).toHaveBeenCalledWith({ name: 'list_unknowns', arguments: { offset: 0, limit: 50 } });
@@ -126,7 +130,7 @@ describe('Sidebar vertical slice', () => {
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'tools', tools: expect.arrayContaining([expect.objectContaining({ name: 'list_unknowns', executable: true })]) })));
     receive({ type: 'execute', name: 'open_binary' });
     expect(mocks.callTool).not.toHaveBeenCalled();
-    receive({ type: 'execute' });
+    receive({ type: 'execute', arguments: {} });
     await vi.waitFor(() => expect(mocks.callTool).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'result', text: expect.stringContaining('No unknowns') })));
     receive({ type: 'disconnect' });
@@ -139,15 +143,26 @@ describe('Sidebar vertical slice', () => {
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'tools', tools: expect.arrayContaining([expect.objectContaining({ name: 'list_unknowns' })]) })));
     if (kind === 'tool') mocks.callTool.mockResolvedValueOnce({ isError: true, content: [{ type: 'text', text: 'Tool query failed' }] });
     else mocks.callTool.mockRejectedValueOnce(new Error('Sensitive internal exception'));
-    receive({ type: 'execute' });
+    receive({ type: 'execute', arguments: {} });
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'result', isError: true })));
     expect(JSON.stringify(postMessage.mock.calls)).not.toContain('Sensitive internal exception');
+  });
+  it('validates arguments in the host and forwards only an allowlisted parameterized call', async () => {
+    await activate();
+    const { receive, postMessage } = await view();
+    receive({ type: 'connect' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'tools', tools: expect.arrayContaining([expect.objectContaining({ name: 'list_unknowns' })]) })));
+    receive({ type: 'execute', arguments: { limit: 101 } });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith({ type: 'notice', text: 'limit is outside its allowed range.' }));
+    expect(mocks.callTool).not.toHaveBeenCalled();
+    receive({ type: 'execute', arguments: { status: 'open', offset: 2, limit: 10 } });
+    await vi.waitFor(() => expect(mocks.callTool).toHaveBeenCalledWith({ name: 'list_unknowns', arguments: { status: 'open', offset: 2, limit: 10 } }));
   });
   it('blocks Webview execution without workspace trust', async () => {
     await activate();
     const { receive, postMessage } = await view();
     mocks.trusted = false;
-    receive({ type: 'execute' });
+    receive({ type: 'execute', arguments: {} });
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'notice', text: expect.stringContaining('trusted workspace') })));
     expect(mocks.callTool).not.toHaveBeenCalled();
     expect(mocks.transport).not.toHaveBeenCalled();
@@ -156,10 +171,10 @@ describe('Sidebar vertical slice', () => {
 
 describe('Webview protocol and output', () => {
   it('rejects malformed messages and arbitrary arguments', () => {
-    for (const value of [null, [], 'execute', {}, { type: 'evil' }, { type: 'execute', arguments: {} }]) {
+    for (const value of [null, [], 'execute', {}, { type: 'evil' }, { type: 'execute', arguments: { unknown: [] } }, { type: 'execute' }]) {
       expect(parseSidebarMessage(value)).toBeUndefined();
     }
-    expect(parseSidebarMessage({ type: 'execute' })).toEqual({ type: 'execute' });
+    expect(parseSidebarMessage({ type: 'execute', arguments: {} })).toEqual({ type: 'execute', arguments: {} });
   });
   it('redacts credential fields and recognizable tokens, and bounds displayed output', () => {
     expect(redact({ password: 'private-value', nested: { apiKey: 'private-value' } })).toEqual({ password: '[REDACTED]', nested: { apiKey: '[REDACTED]' } });

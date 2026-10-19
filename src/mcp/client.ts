@@ -1,9 +1,12 @@
+import { READ_ONLY_TOOL, validateReadOnlyArguments } from '../services/readOnlyExecution';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 export class ReaMcpClient {
   private client: Client | undefined;
   private transport: StdioClientTransport | undefined;
+
+  private executionSchema: unknown;
 
   onDidDisconnect?: () => void;
 
@@ -25,6 +28,7 @@ export class ReaMcpClient {
 
     client.onclose = () => {
       if (this.client === client) {
+        this.executionSchema = undefined;
         this.client = undefined;
         this.transport = undefined;
         this.onDidDisconnect?.();
@@ -47,11 +51,12 @@ export class ReaMcpClient {
       throw new Error('REA is not connected.');
     }
 
+    const connectedClient = this.client;
     const tools = [];
     let cursor: string | undefined;
 
     do {
-      const result = await this.client.listTools(
+      const result = await connectedClient.listTools(
         cursor ? { cursor } : undefined
       );
 
@@ -59,22 +64,23 @@ export class ReaMcpClient {
       cursor = result.nextCursor;
     } while (cursor);
 
+    if (this.client === connectedClient) {
+      this.executionSchema = tools.find(tool => tool.name === READ_ONLY_TOOL)?.inputSchema;
+    }
     return tools;
   }
 
-  async executeReadOnlyTool(name: string) {
-    if (name !== 'list_unknowns') {
-      throw new Error('Tool execution is not allowed.');
-    }
-    if (!this.client) {
-      throw new Error('REA is not connected.');
-    }
-    return this.client.callTool({ name, arguments: { offset: 0, limit: 50 } });
+  async executeReadOnlyTool(name: string, input: unknown = {}) {
+    const validation = validateReadOnlyArguments(name, this.executionSchema, input);
+    if (!validation.ok) throw new Error(validation.error);
+    if (!this.client) throw new Error('REA is not connected.');
+    return this.client.callTool({ name, arguments: validation.arguments });
   }
 
   async disconnect(): Promise<void> {
     const client = this.client;
 
+    this.executionSchema = undefined;
     this.client = undefined;
     this.transport = undefined;
 

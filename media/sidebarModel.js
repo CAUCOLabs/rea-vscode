@@ -29,7 +29,7 @@
       if (Array.isArray(field.enum)) constraints.push(`Allowed: ${field.enum.map(printable).join(', ')}`);
       if (Object.hasOwn(field, 'const')) constraints.push(`Value: ${printable(field.const)}`);
       if (Object.hasOwn(field, 'default')) constraints.push(`Default: ${printable(field.default)}`);
-      for (const key of ['minimum', 'maximum', 'minLength', 'maxLength', 'minItems', 'maxItems', 'pattern']) {
+      for (const key of ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'minLength', 'maxLength', 'minItems', 'maxItems', 'pattern']) {
         if (Object.hasOwn(field, key)) constraints.push(`${key}: ${printable(field[key])}`);
       }
       return { name, type, required: required.includes(name), description: typeof field.description === 'string' ? field.description : '', constraints };

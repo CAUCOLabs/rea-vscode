@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
 import type { ReaMcpClient } from '../mcp/client';
+import { executionEditor, validateReadOnlyArguments } from '../services/readOnlyExecution';
 import type { ConnectionManager } from '../services/connectionManager';
 import { parseSidebarMessage, READ_ONLY_TOOL, redact, resultText } from './sidebarProtocol';
 
@@ -45,10 +46,10 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
 <h2>REA Explorer</h2><p id="status" role="status">Disconnected</p>
 <div class="actions"><button id="connect">Connect</button><button id="disconnect" disabled>Disconnect</button><button id="refresh" disabled>Refresh tools</button></div>
 <p id="notice" role="status"></p>
-<label for="search">Search tools</label><input id="search" type="search" placeholder="Name or description">
-<p id="count"></p><p class="hint">Grouped by literal name prefix, not by permissions.</p><div id="tools" aria-label="Tools"></div>
-<section id="detail" hidden><h3 id="name"></h3><p id="description"></p><h4>Input parameters</h4><div id="parameters"></div><details><summary>Raw JSON Schema</summary><pre id="schema"></pre></details>
-<button id="execute" disabled>Run read-only query (first 50)</button><p>Only list_unknowns can run in this MVP. Arguments are fixed: offset 0, limit 50.</p></section>
+<section class="navigation" aria-label="Tool navigation"><label for="search">Search tools</label><input id="search" type="search" placeholder="Name or description">
+<div class="actions navigation-controls"><button id="expand-all">Expand All</button><button id="collapse-all">Collapse All</button></div><p id="count"></p><p class="hint">Grouped by literal name prefix, not by permissions.</p><div id="tools" aria-label="Tools" tabindex="0"></div></section>
+<section id="detail" hidden><h3 id="name"></h3><details id="tool-description"><summary>Description</summary><p id="description"></p></details><h4>Input parameters</h4><div id="parameters"></div><details><summary>Raw JSON Schema</summary><pre id="schema"></pre></details>
+<p id="execution-policy" class="hint"></p><p id="parameter-error" role="alert"></p><button id="execute" hidden disabled>Run read-only query</button><p class="hint">Only list_unknowns is authorized. Page size is limited to 100; omitted offset/limit use 0/50. Parameters are not persisted.</p></section>
 <h3>Result</h3><p id="result-status" role="status">No result yet.</p><div id="result"></div><details id="original-section" hidden><summary>Original MCP response (redacted; output limit applies)</summary><pre id="original-response"></pre></details>
 <script nonce="${nonce}" src="${model}"></script><script nonce="${nonce}" src="${script}"></script></body></html>`;
     const receiver = view.webview.onDidReceiveMessage((message: unknown) => { void this.receive(message); });
@@ -71,10 +72,13 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
     const tools = await this.client.listTools();
     if (generation !== this.generation || !this.manager.isConnected() || !vscode.workspace.isTrusted) return;
     this.tools = tools;
-    this.send({ type: 'tools', tools: tools.map(tool => ({
-      name: redact(tool.name), description: redact(tool.description ?? ''), inputSchema: redact(tool.inputSchema),
-      executable: tool.name === READ_ONLY_TOOL
-    })) });
+    this.send({ type: 'tools', tools: tools.map(tool => {
+      const editor = executionEditor(tool.name, tool.inputSchema);
+      return {
+        name: redact(tool.name), description: redact(tool.description ?? ''), inputSchema: redact(tool.inputSchema),
+        executable: tool.name === READ_ONLY_TOOL, editor: redact(editor)
+      };
+    }) });
   }
 
   private async receive(value: unknown): Promise<void> {
@@ -103,13 +107,19 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
             this.send({ type: 'notice', text: 'A trusted workspace and an active connection are required.' });
             return;
           }
-          if (!this.tools.some(tool => tool.name === READ_ONLY_TOOL)) {
+          const tool = this.tools.find(tool => tool.name === READ_ONLY_TOOL);
+          if (!tool) {
             this.send({ type: 'notice', text: 'The read-only tool is not available in the current catalog.' });
+            return;
+          }
+          const validation = validateReadOnlyArguments(READ_ONLY_TOOL, tool.inputSchema, message.arguments);
+          if (!validation.ok) {
+            this.send({ type: 'notice', text: validation.error });
             return;
           }
           const generation = this.generation;
           this.send({ type: 'result', text: '', pending: true });
-          const result = await this.client.executeReadOnlyTool(READ_ONLY_TOOL);
+          const result = await this.client.executeReadOnlyTool(READ_ONLY_TOOL, validation.arguments);
           if (generation === this.generation && this.manager.isConnected() && vscode.workspace.isTrusted) {
             this.send({ type: 'result', text: resultText(result), isError: result.isError === true });
             this.send({ type: 'notice', text: result.isError ? 'REA returned a tool error. See the result.' : 'Read-only query completed.' });

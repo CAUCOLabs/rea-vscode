@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
+import { executionEditor } from '../src/services/readOnlyExecution';
+import { readOnlySchema } from './readOnlyFixture';
 import { describe, expect, it } from 'vitest';
 
 // A small DOM double exercises the actual shipped scripts without a browser,
@@ -33,7 +35,7 @@ class Node {
 function descendants(node: Node): Node[] { return node.children.flatMap(child => [child, ...descendants(child)]); }
 
 function setup() {
-  const ids = ['connect', 'disconnect', 'refresh', 'execute', 'detail', 'name', 'description', 'schema', 'parameters', 'search', 'count', 'tools', 'status', 'notice', 'result', 'result-status', 'original-response', 'original-section'];
+  const ids = ['connect', 'disconnect', 'refresh', 'execute', 'detail', 'name', 'description', 'schema', 'parameters', 'search', 'count', 'tools', 'status', 'notice', 'result', 'result-status', 'original-response', 'original-section', 'expand-all', 'collapse-all', 'execution-policy', 'parameter-error'];
   const nodes = Object.fromEntries(ids.map(id => [id, new Node('div')]));
   const sent: unknown[] = [];
   let receive!: (event: { data: unknown }) => void;
@@ -48,7 +50,7 @@ function setup() {
   return { nodes, sent, send: (data: unknown) => receive({ data }), model: context.reaSidebarModel };
 }
 const tools = [
-  { name: 'list_unknowns', description: 'List residual unknown records with complete details.', executable: true,
+  { name: 'list_unknowns', description: 'List residual unknown records with complete details.', executable: true, editor: executionEditor('list_unknowns', readOnlySchema),
     inputSchema: { type: 'object', required: ['status'], properties: {
       status: { type: 'string', description: 'Exact status filter.', enum: ['open', 'resolved'] },
       limit: { type: 'integer', default: 50, minimum: 1 },
@@ -61,6 +63,57 @@ const tools = [
 const toolButtons = (node: Node) => descendants(node).filter(child => child.tag === 'button');
 
 describe('Compact catalog and schema details', () => {
+  it('starts collapsed and expands/collapses groups without changing search or selection', () => {
+    const { nodes, send } = setup();
+    send({ type: 'tools', tools });
+    const groups = () => descendants(nodes.tools).filter(node => node.className === 'tool-group');
+    expect(groups().every(node => !node.open)).toBe(true);
+    nodes['expand-all'].click();
+    expect(groups().every(node => node.open)).toBe(true);
+    toolButtons(nodes.tools).find(node => node.textContent === 'list_unknowns')!.click();
+    nodes['collapse-all'].click();
+    expect(groups().every(node => !node.open)).toBe(true);
+    nodes.search.value = 'complete details'; nodes.search.listeners.input();
+    expect(nodes.name.textContent).toBe('list_unknowns');
+    nodes['expand-all'].click();
+    expect(nodes.search.value).toBe('complete details');
+    expect(groups()[0].open).toBe(true);
+  });
+  it('renders vertical parameter cards with collapsible descriptions, without a table', () => {
+    const { nodes, send } = setup();
+    send({ type: 'tools', tools });
+    toolButtons(nodes.tools).find(node => node.textContent === 'list_unknowns')!.click();
+    expect(descendants(nodes.parameters).some(node => node.tag === 'table')).toBe(false);
+    expect(nodes.parameters.children.every(node => node.className === 'parameter-card')).toBe(true);
+    expect(descendants(nodes.parameters).filter(node => node.tag === 'details').every(node => !node.open)).toBe(true);
+  });
+  it('edits allowlisted filters and blocks invalid values before posting', () => {
+    const { nodes, send, sent } = setup();
+    send({ type: 'tools', tools: [{ ...tools[0], inputSchema: readOnlySchema }, ...tools.slice(1)] });
+    send({ type: 'status', state: 'connected', trusted: true, busy: false });
+    toolButtons(nodes.tools).find(node => node.textContent === 'list_unknowns')!.click();
+    const input = (name: string) => descendants(nodes.parameters).find(node => (node as any).id === `parameter-${name}`)!;
+    input('status').value = 'open'; input('offset').value = '10'; input('limit').value = '5';
+    nodes.execute.click();
+    expect(sent.at(-1)).toEqual({ type: 'execute', arguments: { status: 'open', offset: 10, limit: 5 } });
+    const before = sent.length;
+    input('limit').value = '101'; nodes.execute.click();
+    expect(sent.length).toBe(before);
+    expect(nodes['parameter-error'].textContent).toContain('limit');
+    toolButtons(nodes.tools).find(node => node.textContent === 'inspect_web_page')!.click();
+    expect(nodes.execute.hidden).toBe(true);
+  });
+  it('disables execution when the allowlisted tool has an unsupported schema', () => {
+    const { nodes, send, sent } = setup();
+    send({ type: 'tools', tools: [{ ...tools[0], editor: { supported: false, reason: 'Unsupported schema' } }] });
+    send({ type: 'status', state: 'connected', trusted: true, busy: false });
+    toolButtons(nodes.tools)[0].click();
+    expect(nodes.execute.disabled).toBe(true);
+    expect(nodes['execution-policy'].textContent).toContain('Unsupported schema');
+    nodes.execute.click();
+    expect(sent).toEqual([{ type: 'ready' }]);
+  });
+
   it('groups by literal name prefix and keeps descriptions out of the list', () => {
     const { nodes, send } = setup();
     send({ type: 'tools', tools });
@@ -95,12 +148,13 @@ describe('Compact catalog and schema details', () => {
   it('keeps execution disabled for tools outside the allowlist', () => {
     const { nodes, send, sent } = setup();
     send({ type: 'tools', tools });
+    send({ type: 'tools', tools: [{ ...tools[0], inputSchema: readOnlySchema }, ...tools.slice(1)] });
     send({ type: 'status', state: 'connected', trusted: true, busy: false });
     toolButtons(nodes.tools).find(node => node.textContent === 'inspect_web_page')!.click();
     expect(nodes.execute.disabled).toBe(true);
     toolButtons(nodes.tools).find(node => node.textContent === 'list_unknowns')!.click();
     nodes.execute.click();
-    expect(sent.at(-1)).toEqual({ type: 'execute' });
+    expect(sent.at(-1)).toEqual({ type: 'execute', arguments: { offset: 0, limit: 50 } });
     send({ type: 'status', state: 'connected', trusted: false, busy: false });
     expect(nodes.execute.disabled).toBe(true);
     expect(nodes.connect.disabled).toBe(true);
