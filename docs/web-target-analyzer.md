@@ -1,0 +1,68 @@
+# REA website analysis
+
+Open REA, paste a website address, click **Analyze**, then review or export an evidence-linked reconstruction report. REA starts its existing engine connection automatically and uses a separate temporary browser for each analysis. No browser profile, port or tool configuration is required on the main screen.
+
+## Quick start
+
+1. Have a supported Chrome/Chromium installation and the separate REA engine installed. Existing machine-scoped engine settings are reused. If the engine cannot start, use **Advanced / Developer Tools → Open REA Settings**, then **Reconnect**. No credentials are needed for the included local fixture.
+2. In VS Code, press F5 → **Run REA Extension**, open a trusted workspace and select REA. It connects automatically. Paste a complete HTTP(S) website URL and click **Analyze**.
+3. Review **Identified components**, **Observed interactions**, **Resources and technologies**, **Reconstruction readiness** and **Missing information**. Available controls are not represented as tested behavior.
+4. **View Analysis** expands the human-readable findings. **Export Report** opens a native Save dialog and writes Markdown only to the chosen destination. **Prepare Reconstruction** prepares an evidence-linked coding-agent brief; it does not build an application or invoke a coding agent. Preparation is disabled when no usable component evidence exists. Export includes the report, proposed specification and explicit unknowns.
+
+Only Web is implemented. GitHub and Desktop App say **Coming soon**, disable analysis, and never start a placeholder workflow.
+
+## Simple local end-to-end test
+
+From the extension repository, start the included non-sensitive fixture:
+
+```sh
+python3 -m http.server 3000 --bind 127.0.0.1 --directory tests/fixtures/web-target
+```
+
+Launch the extension with F5, wait for **Ready**, paste `http://127.0.0.1:3000/`, and click **Analyze**. REA opens its own browser, selects the loaded page and closes the browser after capturing the report. No manually started debugging browser is needed.
+
+Verify that the report identifies headings, navigation, a search input and the disabled Save control. The fixture has no search implementation or backend, so the report must not claim either works. `/api/items` in its script is only a static candidate. Click **View Analysis**, **Prepare Reconstruction**, and **Export Report**, then inspect the resulting Markdown. Inspect missing information rather than assuming a complete application model.
+
+## Dedicated browser lifecycle
+
+The extension locates Chrome/Chromium (or Edge where explicitly supported) in known installation paths. It creates a private temporary directory, configures any browser-generated downloads inside that directory, and launches the installed executable without a shell, inherited API credentials, or user-supplied flags. It uses headless mode, a fresh `--user-data-dir`, and `--remote-debugging-port=0`. The ephemeral connection is read from that owned profile's `DevToolsActivePort` file; REA never scans or attaches to an existing personal browser. The endpoint is always literal loopback. Downloads, cookies and state are not reused from a personal profile.
+
+These browser primitives are documented by [Chrome Headless](https://developer.chrome.com/docs/automation-and-testing/headless), the [DevTools Protocol documentation](https://chromedevtools.github.io/devtools-protocol/) and [Chrome's dedicated-profile requirement](https://developer.chrome.com/blog/remote-debugging-port). Chromium's [remote debugging server implementation](https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/devtools/remote_debugging_server.cc) binds HTTP discovery to loopback. The code also requests loopback explicitly; remote endpoint input from the Webview is rejected.
+
+The browser opens exactly the requested startup URL. Normal page scripts and server redirects can run while the website loads; the extension does not inject JavaScript, click controls, submit forms or crawl links. One loaded page must be available in the new profile. If the URL redirects, REA analyzes the final address and records that redirect behavior itself remains untested. A stable final URL identifies the owned tab; it is not proof that every asynchronous component has finished loading.
+
+The owned process is stopped after success, failure, cancellation, connection changes or extension disposal; only its temporary profile is removed. Unix cleanup signals the owned process group, and Windows uses the owned PID's process tree. A profile is not removed while the owned browser cannot be stopped. If cleanup fails, the UI reports it; forcibly terminated browsers or OS policy may require manual cleanup. User browser processes are never intentionally terminated.
+
+Browser preparation has a 20-second budget, selected engine calls use a 20-second request timeout and 25-second maximum total timeout, and the complete workflow has a 105-second cancellation budget. No new browser package or browser binary is downloaded. Custom installation locations, unsupported operating systems, browser policies, sandbox restrictions or missing executable permissions can prevent automatic setup. If no supported executable is found, the main screen gives one action: install Chrome/Chromium and try Analyze again. The native launch and OS cleanup paths still require real platform testing.
+
+## Verified engine operations
+
+The existing REA 6.7.0 source definitions and live input schemas were inspected:
+
+| Operation | Use | Scope |
+| --- | --- | --- |
+| `list_browser_targets` | Select the owned page by its final exact URL | Exact origin, no arbitrary page selection |
+| `inspect_web_page` | Semantic DOM, accessibility roles/labels, declared URLs, resource/script metadata and attach-window network observations | 500 ms; no injected evaluation, clicks, body/header content, console text or storage keys/fingerprints |
+| `analyze_web_bundle` | Static route/API/technology candidates from captured JavaScript | 500 ms observation; source-map fetching disabled; no execution of captured code |
+
+These operations have `readOnlyHint: false` because REA accesses CDP and records Evidence in its own session. Captures are passive toward the loaded page; the preceding, explicitly requested browser navigation is a separate owned-browser operation.
+
+REA's `capture_browser_scenario` can launch a browser for an active scenario, but its ownership/cleanup scope is tied to that scenario. The extension does not invent a persistent REA browser-launch API or enable active scenarios. It reuses the existing passive analyzer on an extension-owned browser. Other tools such as `observe_web_session`, `observe_web_execution`, `inspect_web_event_listeners` and `capture_web_screenshot` remain outside this workflow.
+
+## Evidence and reconstruction boundaries
+
+OBSERVED means represented by retained evidence, not necessarily visually measured or functionally tested. INFERRED means a static candidate, even if the provider reports high confidence. UNKNOWN includes inaccessible behavior, attach-limited network activity, truncated/policy-filtered sections and missing backend contracts. PROPOSED labels independent implementation choices, never a claimed copy of hidden implementation details.
+
+Requirements link to finding IDs; findings link to the source tool, Evidence ID and result path. Locally computed SHA-256 hashes identify the received evidence serialization; they do not independently authenticate the engine. Those identifiers, full findings, schemas, raw advanced tool responses and browser connection details live under the closed **Advanced / Developer Tools** section. The primary screen shows a simpler projection without internal provenance identifiers.
+
+If capture fails, REA displays **Analysis incomplete**, disables reconstruction preparation and exports only a diagnostic/limited report. If a useful page snapshot exists but scripts or resources are missing, the report keeps those gaps explicit. A UI brief is not proof of complete reconstruction readiness, backend knowledge, authentication equivalence or pixel fidelity.
+
+## Security and validation
+
+Workspace Trust gates engine startup, browser startup, inspection and export. It is checked before and after asynchronous steps. The installed stable VS Code types expose no trust-revocation event; immediate asynchronous revocation handling therefore remains limited. Connection changes abort in-flight analysis. Reports are held in memory and written only after the user chooses an export destination. The Webview cannot supply executable paths, browser flags, connection endpoints, arbitrary tool names, export paths or report bodies.
+
+The restrictive nonce-based CSP, validated messages, local allowlists and schema validation remain in place. Untrusted website/tool text is rendered as text, never HTML. Exports escape Markdown data and instruct coding agents to treat external evidence as data, not instructions.
+
+Raw source, storage contents, cookies, DOM attribute values, bodies and header values are not exported. Query values, fragments, recognizable credentials and personal machine paths are removed. Accessibility labels and page titles can contain sensitive prose that pattern redaction cannot recognize; review exports before sharing. Processing remains capped at 5 million characters per response, with per-section limits and explicit omissions in the advanced evidence. No authentication bypass, unrestricted automation or crawling is implemented.
+
+Automated tests cover UI state, coming-soon workflows, startup/reconnect, evidence/readiness projection, controlled analysis/export, browser isolation, bounds, cancellation and cleanup using fixtures/mocks. They do not prove real browser startup, operating-system cleanup, real Extension Development Host layout or capture success. The previous real-engine diagnostic check returned a tool error and correctly produced zero observed findings; a successful live capture with automatic browser setup is still to be verified.

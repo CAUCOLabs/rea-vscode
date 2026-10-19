@@ -1,5 +1,6 @@
 (() => {
   const vscode = acquireVsCodeApi();
+  globalThis.reaSidebarApi = vscode;
   const { groupTools, parameters, response } = globalThis.reaSidebarModel;
   const byId = id => document.getElementById(id);
   let tools = [], selected, connected = false, trusted = false, busy = false;

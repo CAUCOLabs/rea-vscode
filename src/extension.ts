@@ -24,7 +24,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const connectCommand = vscode.commands.registerCommand(
     'rea.connect',
-    async () => {
+    async (quiet = false) => {
       try {
         if (!vscode.workspace.isTrusted) {
           output.appendLine(
@@ -63,10 +63,15 @@ export function activate(context: vscode.ExtensionContext) {
 
         output.appendLine('Connecting to REA MCP server.');
 
-        await vscode.window.withProgress(
+        const connect = async () => {
+          if (!vscode.workspace.isTrusted) throw new Error('Workspace is not trusted.');
+          await connectionManager.connect(command, args);
+        };
+        if (quiet === true) await connect();
+        else await vscode.window.withProgress(
           {
             location: vscode.ProgressLocation.Notification,
-            title: 'Connecting to REA MCP server...',
+            title: 'Starting REA…',
             cancellable: false
           },
           async () => {
@@ -85,17 +90,17 @@ export function activate(context: vscode.ExtensionContext) {
 
         output.appendLine('REA MCP connection established.');
 
-        vscode.window.showInformationMessage(
-          'REA MCP server connected successfully.'
+        if (quiet !== true) vscode.window.showInformationMessage(
+          'REA is ready.'
         );
       } catch {
         const message = 'Unable to connect. Check Workspace Trust, the REA executable, and the absolute script path in user settings.';
 
         output.appendLine(`Connection error: ${message}`);
-        output.show(true);
+        if (quiet !== true) output.show(true);
 
-        vscode.window.showErrorMessage(
-          `REA connection failed: ${message}`
+        if (quiet !== true) vscode.window.showErrorMessage(
+          'REA could not start. Check the installation in REA Settings, then reconnect.'
         );
       }
     }

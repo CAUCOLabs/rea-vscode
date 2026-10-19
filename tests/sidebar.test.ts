@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { webResponse, webSchemas, webTarget } from './webAnalyzerFixture';
 import { readOnlySchema } from './readOnlyFixture';
 import { parseSidebarMessage, redact, resultText } from '../src/views/sidebarProtocol';
 
@@ -14,9 +15,15 @@ const mocks = vi.hoisted(() => ({
   log: vi.fn(),
   beforeProgress: undefined as (() => void) | undefined,
   provider: undefined as any,
+  saveDialog: vi.fn(),
+  writeFile: vi.fn(),
+  startBrowser: vi.fn(),
+  closeBrowser: vi.fn(),
 }));
+vi.mock('../src/services/analysisBrowser', () => ({ AnalysisBrowserError: class extends Error {}, startAnalysisBrowser: mocks.startBrowser }));
 vi.mock('vscode', () => ({
   workspace: {
+    fs: { writeFile: mocks.writeFile },
     get isTrusted() { return mocks.trusted; },
     onDidGrantWorkspaceTrust: vi.fn(() => ({ dispose() {} })),
     getConfiguration: () => ({ get: (key: string) => key === 'scriptPath' ? '/fixture/rea.mjs' : 'node' })
@@ -24,6 +31,7 @@ vi.mock('vscode', () => ({
   ProgressLocation: { Notification: 15 },
   Uri: { joinPath: (_base: unknown, ...parts: string[]) => parts.join('/') },
   window: {
+    showSaveDialog: mocks.saveDialog,
     createOutputChannel: () => ({ appendLine: mocks.log, show() {}, dispose() {} }),
     showWarningMessage: mocks.warning, showErrorMessage: mocks.error, showInformationMessage: mocks.info,
     withProgress: async (_options: unknown, task: () => unknown) => { mocks.beforeProgress?.(); return task(); },
@@ -33,7 +41,7 @@ vi.mock('vscode', () => ({
     registerCommand: (name: string, callback: (...args: unknown[]) => unknown) => {
       mocks.commands.set(name, callback); return { dispose() {} };
     },
-    executeCommand: async (name: string) => mocks.commands.get(name)?.()
+    executeCommand: async (name: string, ...args: unknown[]) => mocks.commands.get(name)?.(...args)
   }
 }));
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
@@ -43,7 +51,8 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
     callTool = mocks.callTool;
     listTools = vi.fn(async () => ({ tools: [
       { name: 'list_unknowns', description: 'Read session records', inputSchema: readOnlySchema },
-      { name: 'open_binary', description: 'Open target', inputSchema: { type: 'object' } }
+      { name: 'open_binary', description: 'Open target', inputSchema: { type: 'object' } },
+      ...Object.entries(webSchemas).map(([name, inputSchema]) => ({ name, inputSchema }))
     ] }));
     close = vi.fn(async () => {});
   }
@@ -56,6 +65,10 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   mocks.commands.clear(); mocks.trusted = true; mocks.beforeProgress = undefined;
+  mocks.startBrowser.mockImplementation(async (options: { url: string }) => ({ endpoint: 'http://127.0.0.1:9222', target: options.url, close: mocks.closeBrowser }));
+  mocks.closeBrowser.mockResolvedValue(undefined);
+  mocks.saveDialog.mockResolvedValue('chosen-report.md');
+  mocks.writeFile.mockResolvedValue(undefined);
   mocks.launch.mockResolvedValue(undefined);
   mocks.callTool.mockResolvedValue({ content: [{ type: 'text', text: 'No unknowns' }] });
 });
@@ -181,5 +194,114 @@ describe('Webview protocol and output', () => {
     expect(resultText('Bearer private-value')).not.toContain('private-value');
     expect(resultText({ content: [{ type: 'text', text: '{"api_key":"private-value"}' }] })).not.toContain('private-value');
     expect(resultText('a'.repeat(100_001))).toContain('[Output truncated]');
+  });
+});
+
+
+describe('Web analyzer host workflow and export', () => {
+  it('inspects using the closed policy and exports only the host-generated report', async () => {
+    await activate();
+    const { receive, postMessage, webview } = await view();
+    expect(webview.html).toContain('Plan your own implementation.');
+    expect(webview.html).toContain('Advanced / Developer Tools');
+    mocks.callTool.mockImplementation(async ({ name }: { name: keyof typeof webSchemas }) => webResponse(name));
+    receive({ type: 'connect' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'connected', busy: false })));
+    receive({ type: 'analyzeWebTarget', url: webTarget });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'analysisReport', report: expect.objectContaining({ status: 'captured' }) })));
+    expect(mocks.startBrowser).toHaveBeenCalledWith(expect.objectContaining({ url: webTarget, allowed: expect.any(Function) }));
+    expect(mocks.closeBrowser).toHaveBeenCalledOnce();
+    expect(mocks.callTool.mock.calls.map(([request]) => request.name)).toEqual(['list_browser_targets', 'inspect_web_page', 'analyze_web_bundle']);
+    receive({ type: 'prepareReconstruction' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'reconstructionPrepared', specification: expect.stringContaining('Proposed application structure') })));
+    expect(mocks.callTool).toHaveBeenCalledTimes(3);
+    const inspection = mocks.callTool.mock.calls[1];
+    expect(inspection[0].arguments).toMatchObject({ observation_ms: 500, include_accessibility_text: true, include_console_text: false, include_json_body_shapes: false, include_script_sources: false });
+    expect(inspection[2]).toMatchObject({ timeout: 20_000, maxTotalTimeout: 25_000 });
+    receive({ type: 'exportWebReport', path: '/tmp/unauthorized', report: 'injected' });
+    expect(mocks.saveDialog).not.toHaveBeenCalled();
+    receive({ type: 'exportWebReport' });
+    await vi.waitFor(() => expect(mocks.writeFile).toHaveBeenCalledOnce());
+    const [destination, bytes] = mocks.writeFile.mock.calls[0];
+    expect(destination).toBe('chosen-report.md');
+    const markdown = new TextDecoder().decode(bytes);
+    expect(markdown).toContain('# REA Web Target Reconstruction Report');
+    expect(markdown).toContain('PROPOSED');
+    expect(markdown).not.toContain('private-value');
+    expect(markdown).not.toContain('injected');
+  });
+  it('never calls a browser tool in an untrusted workspace', async () => {
+    await activate();
+    const { receive, postMessage } = await view();
+    mocks.trusted = false;
+    receive({ type: 'analyzeWebTarget', url: webTarget });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'analysisProgress', message: expect.stringContaining('workspace') })));
+    expect(mocks.callTool).not.toHaveBeenCalled();
+    expect(mocks.transport).not.toHaveBeenCalled();
+    receive({ type: 'exportWebReport' });
+    expect(mocks.saveDialog).not.toHaveBeenCalled();
+  });
+  it('does not write a file when the save dialog is cancelled', async () => {
+    await activate();
+    const { receive, postMessage } = await view();
+    mocks.callTool.mockImplementation(async ({ name }: { name: keyof typeof webSchemas }) => webResponse(name));
+    receive({ type: 'connect' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'connected', busy: false })));
+    receive({ type: 'analyzeWebTarget', url: webTarget });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'analysisReport' })));
+    mocks.saveDialog.mockResolvedValueOnce(undefined);
+    receive({ type: 'exportWebReport' });
+    await vi.waitFor(() => expect(mocks.saveDialog).toHaveBeenCalledOnce());
+    expect(mocks.writeFile).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('Simple startup and recovery', () => {
+  it('connects automatically once when the view becomes ready without opening a browser', async () => {
+    await activate();
+    const { receive, postMessage, webview } = await view();
+    receive({ type: 'ready' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'connected', busy: false })));
+    expect(mocks.launch).toHaveBeenCalledOnce();
+    expect(mocks.startBrowser).not.toHaveBeenCalled();
+    expect(mocks.info).not.toHaveBeenCalled();
+    const primary = webview.html.split('<details id="advanced-explorer">')[0];
+    expect(primary).not.toMatch(/MCP|CDP|JSON Schema|9222|Evidence ID/);
+    expect(webview.html).toContain('<details id="advanced-explorer"><summary>Advanced / Developer Tools</summary>');
+    receive({ type: 'ready' });
+    expect(mocks.launch).toHaveBeenCalledOnce();
+  });
+  it('does not auto-launch REA in an untrusted workspace', async () => {
+    await activate();
+    const { receive } = await view();
+    mocks.trusted = false;
+    receive({ type: 'ready' });
+    expect(mocks.launch).not.toHaveBeenCalled();
+    expect(mocks.startBrowser).not.toHaveBeenCalled();
+  });
+  it('allows a manual reconnect after a failed automatic connection without exposing SDK errors', async () => {
+    await activate();
+    const { receive, postMessage } = await view();
+    mocks.launch.mockRejectedValueOnce(new Error('sensitive internal exception'));
+    receive({ type: 'ready' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'error', busy: false })));
+    expect(mocks.error).not.toHaveBeenCalled();
+    expect(JSON.stringify(postMessage.mock.calls)).not.toContain('sensitive internal exception');
+    receive({ type: 'connect' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'connected', busy: false })));
+    expect(mocks.launch).toHaveBeenCalledTimes(2);
+  });
+  it('shows an actionable browser error without publishing a successful report', async () => {
+    const { AnalysisBrowserError } = await import('../src/services/analysisBrowser');
+    await activate();
+    const { receive, postMessage } = await view();
+    receive({ type: 'ready' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'connected', busy: false })));
+    mocks.startBrowser.mockRejectedValueOnce(new AnalysisBrowserError('Install Google Chrome or Chromium, then click Analyze again.'));
+    receive({ type: 'analyzeWebTarget', url: webTarget });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'analysisProgress', message: expect.stringContaining('Install Google Chrome') })));
+    expect(postMessage.mock.calls.some(([message]) => message.type === 'analysisReport')).toBe(false);
+    expect(mocks.callTool).not.toHaveBeenCalled();
   });
 });
