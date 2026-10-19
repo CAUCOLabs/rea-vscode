@@ -25,8 +25,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../src/analysis/reconstructionProject', () => ({ createReconstructionProject: mocks.createProject }));
 vi.mock('../src/services/analysisBrowser', () => ({ AnalysisBrowserError: class extends Error {}, startAnalysisBrowser: mocks.startBrowser }));
 vi.mock('vscode', () => ({
+  EventEmitter: class { event = vi.fn(); fire() {} dispose() {} },
+  lm: { registerMcpServerDefinitionProvider: vi.fn(() => ({ dispose() {} })) },
+  McpStdioServerDefinition: class { constructor(public label: string, public command: string, public args: string[]) {} },
   workspace: {
     fs: { writeFile: mocks.writeFile },
+    onDidChangeConfiguration: vi.fn(() => ({ dispose() {} })),
     get isTrusted() { return mocks.trusted; },
     onDidGrantWorkspaceTrust: vi.fn(() => ({ dispose() {} })),
     getConfiguration: () => ({ get: (key: string) => key === 'scriptPath' ? '/fixture/rea.mjs' : 'node' })
@@ -52,6 +56,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   Client: class {
     onclose?: () => void;
     connect = mocks.launch;
+    setNotificationHandler = vi.fn();
     callTool = mocks.callTool;
     listTools = vi.fn(async () => ({ tools: [
       { name: 'list_unknowns', description: 'Read session records', inputSchema: readOnlySchema },

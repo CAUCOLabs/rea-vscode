@@ -181,3 +181,6 @@ Copyright (c) 2026 CAUCOLabs.
 The original REA project is separately licensed under the MIT License, Copyright (c) 2026 morluto.
 
 See the respective license notices for details.
+### Full engine access for coding agents
+
+The full engine is now exposed separately from the narrow automatic analyzer/editor flows. **Copilot** uses the native VS Code MCP provider **REA full engine**. **Codex** uses **REA: Configure Codex MCP**, which configures a trusted project's `.codex/config.toml` without assuming compatibility with VS Code's provider registry. **REA: Invoke Any Tool** permits explicitly authorized calls to any discovered tool. See [setup, contracts, orchestration and validation](docs/full-engine-access.md) for the distinction between 207 interface-accessible tools and the subset actually tested, including dependency requirements and host acceptance checks still needed.

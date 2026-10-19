@@ -32,7 +32,8 @@
   },
   "homepage": "https://github.com/CAUCOLabs/rea-vscode#readme",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.1"
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "smol-toml": "^1.9.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
@@ -46,7 +47,7 @@
   "publisher": "CAUCOLabs",
   "private": true,
   "engines": {
-    "vscode": "^1.100.0"
+    "vscode": "^1.102.0"
   },
   "categories": [
     "Other"
@@ -55,7 +56,8 @@
     "onCommand:rea.connect",
     "onCommand:rea.listTools",
     "onCommand:rea.disconnect",
-    "onView:rea.sidebar"
+    "onView:rea.sidebar",
+    "onStartupFinished"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -76,6 +78,14 @@
       {
         "command": "rea.disconnect",
         "title": "REA: Disconnect"
+      },
+      {
+        "command": "rea.configureCodex",
+        "title": "REA: Configure Codex MCP"
+      },
+      {
+        "command": "rea.invokeTool",
+        "title": "REA: Invoke Any Tool"
       }
     ],
     "configuration": {
@@ -112,6 +122,12 @@
           "name": "REA Explorer"
         }
       ]
-    }
+    },
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "rea.engine",
+        "label": "REA full engine"
+      }
+    ]
   }
 }

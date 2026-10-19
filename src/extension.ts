@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import * as path from 'node:path';
+import { launchConfiguration, registerAgentIntegration } from './services/agentIntegration';
 
 import { ReaMcpClient } from './mcp/client';
 import { ConnectionManager } from './services/connectionManager';
@@ -12,6 +12,7 @@ const connectionManager = new ConnectionManager(rea);
 let output: vscode.OutputChannel;
 
 export function activate(context: vscode.ExtensionContext) {
+  registerAgentIntegration(context);
   output = vscode.window.createOutputChannel('REA');
 
   output.appendLine('REA for VS Code activated.');
@@ -48,18 +49,7 @@ export function activate(context: vscode.ExtensionContext) {
         const scriptPath = config.get<string>('scriptPath', '').trim();
         const executable = config.get<string>('executable', 'node').trim();
 
-        if (!executable) {
-          throw new Error('REA executable cannot be empty.');
-        }
-
-        if (scriptPath && !path.isAbsolute(scriptPath)) {
-          throw new Error('REA scriptPath must be an absolute path.');
-        }
-
-        const command = scriptPath ? executable : 'npx';
-        const args = scriptPath
-          ? [scriptPath, 'mcp']
-          : ['--no-install', 'rea-agents', 'mcp'];
+        const { command, args } = launchConfiguration(executable, scriptPath);
 
         output.appendLine('Connecting to REA MCP server.');
 
@@ -133,6 +123,33 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  const invokeCommand = vscode.commands.registerCommand('rea.invokeTool', async () => {
+    try {
+      if (!vscode.workspace.isTrusted) throw new Error('Workspace is not trusted.');
+      const tools = await rea.listTools();
+      const selected = await vscode.window.showQuickPick(tools.map(tool => ({ label: tool.name, description: tool.description })), { title: 'REA full engine: select a tool' });
+      if (!selected) return;
+      const input = await vscode.window.showInputBox({ title: `Arguments for ${selected.label}`, prompt: 'JSON object matching the complete live input schema in Tool Explorer', value: '{}' });
+      if (input === undefined) return;
+      const args: unknown = JSON.parse(input);
+      if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Arguments must be a JSON object.');
+      const result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: selected.label, cancellable: true }, async (_, token) => {
+        const controller = new AbortController();
+        const subscription = token.onCancellationRequested(() => controller.abort());
+        try {
+          return await rea.invokeTool(selected.label, args as Record<string, unknown>, { signal: controller.signal, timeout: 300_000 }, async (tool, values) => {
+            if (!vscode.workspace.isTrusted) return false;
+            const approved = await vscode.window.showWarningMessage(`Run REA ${tool.name}? Review target paths and side effects.`, { modal: true, detail: JSON.stringify(values, null, 2) }, 'Run');
+            return approved === 'Run' && vscode.workspace.isTrusted;
+          });
+        } finally { subscription.dispose(); }
+      });
+      // Keep the complete MCP envelope, including structuredContent, images and resource links.
+      const document = await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(result, null, 2) });
+      await vscode.window.showTextDocument(document);
+    } catch (error) { void vscode.window.showErrorMessage(`REA: ${String(redact(error instanceof Error ? error.message : String(error)))}`); }
+  });
+
   const disconnectCommand = vscode.commands.registerCommand(
     'rea.disconnect',
     async () => {
@@ -153,6 +170,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    invokeCommand,
     connectCommand,
     listToolsCommand,
     disconnectCommand,

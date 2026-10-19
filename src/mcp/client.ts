@@ -1,5 +1,8 @@
 import { WEB_TOOLS, webArguments, acceptsWebArguments, type WebTool } from '../services/webToolPolicy';
 import { READ_ONLY_TOOL, validateReadOnlyArguments } from '../services/readOnlyExecution';
+import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
@@ -10,7 +13,35 @@ export class ReaMcpClient {
   private executionSchema: unknown;
   private webSchemas = new Map<string, unknown>();
 
+  // Last complete catalog survives a transport disconnect. Calls still require a live session.
+  private catalog: Tool[] = [];
+  onDidChangeTools?: () => void;
   onDidDisconnect?: () => void;
+
+  getTools(): readonly Tool[] { return structuredClone(this.catalog); }
+
+  async invokeTool(name: string, input: Record<string, unknown>, options: RequestOptions = {},
+    authorize: (tool: Tool, args: Record<string, unknown>) => Promise<boolean>) {
+    if (!this.client) throw new Error('REA is not connected.');
+    const client = this.client;
+    const tool = this.catalog.find(tool => tool.name === name);
+    if (!tool) throw new Error('Tool is not in the current REA catalog. Refresh discovery.');
+    const args = structuredClone(input);
+    if (!await authorize(structuredClone(tool), structuredClone(args))) throw new Error('REA operation was not authorized.');
+    if (this.client !== client) throw new Error('REA session changed during authorization.');
+    // REA validates its full JSON Schema contract. No argument rewriting or subset validator.
+    return client.callTool({ name, arguments: args }, undefined, options);
+  }
+
+  async readResource(uri: string, options?: RequestOptions) {
+    if (!this.client) throw new Error('REA is not connected.');
+    return this.client.readResource({ uri }, options);
+  }
+
+  async listResources(cursor?: string, options?: RequestOptions) {
+    if (!this.client) throw new Error('REA is not connected.');
+    return this.client.listResources(cursor ? { cursor } : undefined, options);
+  }
 
   async connect(command: string, args: string[]): Promise<void> {
     if (this.client) {
@@ -43,6 +74,10 @@ export class ReaMcpClient {
 
       this.client = client;
       this.transport = transport;
+      await this.listTools();
+      client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
+        await this.listTools();
+      });
     } catch (error) {
       await client.close().catch(() => undefined);
       throw error;
@@ -57,6 +92,7 @@ export class ReaMcpClient {
     const connectedClient = this.client;
     const tools = [];
     let cursor: string | undefined;
+    const seen = new Set<string>();
 
     do {
       const result = await connectedClient.listTools(
@@ -65,9 +101,13 @@ export class ReaMcpClient {
 
       tools.push(...result.tools);
       cursor = result.nextCursor;
+      if (cursor && seen.has(cursor)) throw new Error('REA returned a repeated catalog cursor.');
+      if (cursor) seen.add(cursor);
     } while (cursor);
 
     if (this.client === connectedClient) {
+      this.catalog = structuredClone(tools);
+      this.onDidChangeTools?.();
       this.webSchemas = new Map(tools.filter(tool => WEB_TOOLS.includes(tool.name as WebTool)).map(tool => [tool.name, tool.inputSchema]));
       this.executionSchema = tools.find(tool => tool.name === READ_ONLY_TOOL)?.inputSchema;
     }
