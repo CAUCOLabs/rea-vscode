@@ -6,6 +6,7 @@ export type ConnectionState =
   | 'error';
 
 export interface ManagedConnection {
+  onDidDisconnect?: () => void;
   connect(command: string, args: string[]): Promise<void>;
   disconnect(): Promise<void>;
   isConnected(): boolean;
@@ -14,9 +15,21 @@ export interface ManagedConnection {
 export class ConnectionManager {
   private state: ConnectionState = 'disconnected';
 
-  constructor(
-    private readonly client: ManagedConnection
-  ) {}
+  private readonly listeners = new Set<() => void>();
+
+  constructor(private readonly client: ManagedConnection) {
+    client.onDidDisconnect = () => this.setState('disconnected');
+  }
+
+  onDidChange(listener: () => void): { dispose(): void } {
+    this.listeners.add(listener);
+    return { dispose: () => { this.listeners.delete(listener); } };
+  }
+
+  private setState(state: ConnectionState): void {
+    this.state = state;
+    for (const listener of this.listeners) listener();
+  }
 
   getState(): ConnectionState {
     return this.state;
@@ -29,13 +42,13 @@ export class ConnectionManager {
       );
     }
 
-    this.state = 'connecting';
+    this.setState('connecting');
 
     try {
       await this.client.connect(command, args);
-      this.state = 'connected';
+      this.setState('connected');
     } catch (error) {
-      this.state = 'error';
+      this.setState('error');
       throw error;
     }
   }
@@ -51,12 +64,12 @@ export class ConnectionManager {
       );
     }
 
-    this.state = 'disconnecting';
+    this.setState('disconnecting');
 
     try {
       await this.client.disconnect();
     } finally {
-      this.state = 'disconnected';
+      this.setState('disconnected');
     }
   }
 

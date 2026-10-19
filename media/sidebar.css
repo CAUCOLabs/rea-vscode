@@ -1,0 +1,14 @@
+body { color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); padding: 12px; }
+h2 { font-size: 1.2em; } h3 { overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; }
+button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 1px solid transparent; padding: 6px 9px; cursor: pointer; }
+button:hover { background: var(--vscode-button-hoverBackground); }
+button:disabled { opacity: .5; cursor: default; }
+button:focus-visible, input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+input { box-sizing: border-box; width: 100%; padding: 6px; margin-top: 6px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); }
+#tools { max-height: 35vh; overflow-y: auto; }
+.tool { display: block; width: 100%; text-align: left; margin-bottom: 5px; background: var(--vscode-list-inactiveSelectionBackground); color: var(--vscode-foreground); }
+.tool strong, .tool span { display: block; overflow-wrap: anywhere; }
+.tool span { margin-top: 4px; font-size: .9em; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px; background: var(--vscode-textCodeBlock-background); max-height: 40vh; overflow-y: auto; }
+#notice { color: var(--vscode-descriptionForeground); } label { display: block; }

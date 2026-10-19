@@ -1,0 +1,130 @@
+import * as vscode from 'vscode';
+import { randomBytes } from 'node:crypto';
+import type { ReaMcpClient } from '../mcp/client';
+import type { ConnectionManager } from '../services/connectionManager';
+import { parseSidebarMessage, READ_ONLY_TOOL, redact, resultText } from './sidebarProtocol';
+
+type Tool = Awaited<ReturnType<ReaMcpClient['listTools']>>[number];
+
+export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Disposable {
+  private view?: vscode.WebviewView;
+  private tools: Tool[] = [];
+  private busy = false;
+  private generation = 0;
+  private readonly subscriptions: vscode.Disposable[] = [];
+
+  constructor(
+    private readonly extensionUri: vscode.Uri,
+    private readonly client: ReaMcpClient,
+    private readonly manager: ConnectionManager
+  ) {
+    this.subscriptions.push(manager.onDidChange(() => {
+      if (manager.getState() !== 'connected') {
+        this.generation++;
+        this.tools = [];
+        this.send({ type: 'tools', tools: [] });
+        this.send({ type: 'result', text: '' });
+      }
+      this.updateStatus();
+    }));
+    this.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => this.updateStatus()));
+  }
+
+  resolveWebviewView(view: vscode.WebviewView): void {
+    this.view = view;
+    const media = vscode.Uri.joinPath(this.extensionUri, 'media');
+    view.webview.options = { enableScripts: true, localResourceRoots: [media] };
+    const nonce = randomBytes(24).toString('hex');
+    const script = view.webview.asWebviewUri(vscode.Uri.joinPath(media, 'sidebar.js'));
+    const style = view.webview.asWebviewUri(vscode.Uri.joinPath(media, 'sidebar.css'));
+    view.webview.html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}'; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none';">
+<link rel="stylesheet" href="${style}"><title>REA Explorer</title></head><body>
+<h2>REA Explorer</h2><p id="status" role="status">Disconnected</p>
+<div class="actions"><button id="connect">Connect</button><button id="disconnect" disabled>Disconnect</button><button id="refresh" disabled>Refresh tools</button></div>
+<p id="notice" role="status"></p>
+<label for="search">Search tools</label><input id="search" type="search" placeholder="Name or description">
+<p id="count"></p><div id="tools" aria-label="Tools"></div>
+<section id="detail" hidden><h3 id="name"></h3><p id="description"></p><h4>Input schema</h4><pre id="schema"></pre>
+<button id="execute" disabled>Run read-only query (first 50)</button><p>Only list_unknowns can run in this MVP. Arguments are fixed: offset 0, limit 50.</p></section>
+<h3>Result</h3><pre id="result" aria-live="polite">No result yet.</pre>
+<script nonce="${nonce}" src="${script}"></script></body></html>`;
+    const receiver = view.webview.onDidReceiveMessage((message: unknown) => { void this.receive(message); });
+    const disposal = view.onDidDispose(() => {
+      receiver.dispose();
+      if (this.view === view) this.view = undefined;
+    });
+    this.subscriptions.push(receiver, disposal);
+  }
+
+  private send(message: object): void { void this.view?.webview.postMessage(message); }
+
+  updateStatus(): void {
+    this.send({ type: 'status', state: this.manager.getState(), trusted: vscode.workspace.isTrusted, busy: this.busy });
+  }
+
+  private async refresh(): Promise<void> {
+    if (!vscode.workspace.isTrusted || !this.manager.isConnected()) return;
+    const generation = this.generation;
+    const tools = await this.client.listTools();
+    if (generation !== this.generation || !this.manager.isConnected() || !vscode.workspace.isTrusted) return;
+    this.tools = tools;
+    this.send({ type: 'tools', tools: tools.map(tool => ({
+      name: redact(tool.name), description: redact(tool.description ?? ''), inputSchema: redact(tool.inputSchema),
+      executable: tool.name === READ_ONLY_TOOL
+    })) });
+  }
+
+  private async receive(value: unknown): Promise<void> {
+    const message = parseSidebarMessage(value);
+    if (!message) return;
+    if (message.type === 'ready') {
+      this.updateStatus();
+      // A newly created view has no catalog, even if the host is already connected.
+      if (!this.manager.isConnected()) return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    this.updateStatus();
+    this.send({ type: 'notice', text: '' });
+    try {
+      switch (message.type) {
+        case 'ready': case 'refresh': await this.refresh(); break;
+        case 'connect':
+          await vscode.commands.executeCommand('rea.connect');
+          if (this.manager.isConnected()) await this.refresh();
+          break;
+        case 'disconnect': await vscode.commands.executeCommand('rea.disconnect'); break;
+        case 'execute': {
+          if (!vscode.workspace.isTrusted || !this.manager.isConnected()) {
+            this.send({ type: 'notice', text: 'A trusted workspace and an active connection are required.' });
+            return;
+          }
+          if (!this.tools.some(tool => tool.name === READ_ONLY_TOOL)) {
+            this.send({ type: 'notice', text: 'The read-only tool is not available in the current catalog.' });
+            return;
+          }
+          const generation = this.generation;
+          const result = await this.client.executeReadOnlyTool(READ_ONLY_TOOL);
+          if (generation === this.generation && this.manager.isConnected() && vscode.workspace.isTrusted) {
+            this.send({ type: 'result', text: resultText(result) });
+            this.send({ type: 'notice', text: result.isError ? 'REA returned a tool error. See the result.' : 'Read-only query completed.' });
+          }
+          break;
+        }
+      }
+    } catch {
+      this.send({ type: 'notice', text: 'REA operation failed. Check the connection and server configuration, then retry.' });
+    } finally {
+      this.busy = false;
+      this.updateStatus();
+    }
+  }
+
+  dispose(): void {
+    for (const item of this.subscriptions) item.dispose();
+    this.view = undefined;
+    this.tools = [];
+  }
+}

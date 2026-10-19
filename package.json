@@ -54,8 +54,15 @@
   "activationEvents": [
     "onCommand:rea.connect",
     "onCommand:rea.listTools",
-    "onCommand:rea.disconnect"
+    "onCommand:rea.disconnect",
+    "onView:rea.sidebar"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "REA MCP server execution is disabled in untrusted workspaces."
+    }
+  },
   "contributes": {
     "commands": [
       {
@@ -76,15 +83,35 @@
       "properties": {
         "rea.executable": {
           "type": "string",
+          "scope": "machine",
           "default": "node",
           "description": "Executable used to launch the REA MCP server."
         },
         "rea.scriptPath": {
           "type": "string",
+          "scope": "machine",
           "default": "",
           "description": "Optional absolute path to the REA CLI script."
         }
       }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "rea",
+          "title": "REA",
+          "icon": "media/rea.svg"
+        }
+      ]
+    },
+    "views": {
+      "rea": [
+        {
+          "type": "webview",
+          "id": "rea.sidebar",
+          "name": "REA Explorer"
+        }
+      ]
     }
   }
 }

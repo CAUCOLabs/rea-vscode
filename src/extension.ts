@@ -3,6 +3,8 @@ import * as path from 'node:path';
 
 import { ReaMcpClient } from './mcp/client';
 import { ConnectionManager } from './services/connectionManager';
+import { ReaSidebarProvider } from './views/reaSidebarProvider';
+import { redact } from './views/sidebarProtocol';
 
 const rea = new ReaMcpClient();
 const connectionManager = new ConnectionManager(rea);
@@ -14,10 +16,26 @@ export function activate(context: vscode.ExtensionContext) {
 
   output.appendLine('REA for VS Code activated.');
 
+  const sidebar = new ReaSidebarProvider(context.extensionUri, rea, connectionManager);
+  context.subscriptions.push(
+    sidebar,
+    vscode.window.registerWebviewViewProvider('rea.sidebar', sidebar)
+  );
+
   const connectCommand = vscode.commands.registerCommand(
     'rea.connect',
     async () => {
       try {
+        if (!vscode.workspace.isTrusted) {
+          output.appendLine(
+            'REA MCP server launch blocked: workspace is not trusted.'
+          );
+          vscode.window.showWarningMessage(
+            'REA MCP server execution is disabled in untrusted workspaces. Trust this workspace before connecting.'
+          );
+          return;
+        }
+
         if (connectionManager.isConnected()) {
           vscode.window.showInformationMessage(
             'REA is already connected.'
@@ -43,9 +61,7 @@ export function activate(context: vscode.ExtensionContext) {
           ? [scriptPath, 'mcp']
           : ['--no-install', 'rea-agents', 'mcp'];
 
-        output.appendLine(
-          `Connecting to REA: ${command} ${args.join(' ')}`
-        );
+        output.appendLine('Connecting to REA MCP server.');
 
         await vscode.window.withProgress(
           {
@@ -54,6 +70,15 @@ export function activate(context: vscode.ExtensionContext) {
             cancellable: false
           },
           async () => {
+            if (!vscode.workspace.isTrusted) {
+              output.appendLine(
+                'REA MCP server launch blocked: workspace is not trusted.'
+              );
+              throw new Error(
+                'REA MCP server execution is disabled in untrusted workspaces.'
+              );
+            }
+
             await connectionManager.connect(command, args);
           }
         );
@@ -63,9 +88,8 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
           'REA MCP server connected successfully.'
         );
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
+      } catch {
+        const message = 'Unable to connect. Check Workspace Trust, the REA executable, and the absolute script path in user settings.';
 
         output.appendLine(`Connection error: ${message}`);
         output.show(true);
@@ -88,7 +112,7 @@ export function activate(context: vscode.ExtensionContext) {
         output.appendLine('--------------------------------');
 
         for (const tool of tools) {
-          output.appendLine(tool.name);
+          output.appendLine(String(redact(tool.name)));
         }
 
         output.show(true);
@@ -96,9 +120,9 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
           `REA: ${tools.length} MCP tools discovered.`
         );
-      } catch (error) {
+      } catch {
         vscode.window.showErrorMessage(
-          `REA tool discovery failed: ${String(error)}`
+          'REA tool discovery failed. Check the connection and retry.'
         );
       }
     }
@@ -115,9 +139,9 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
           'REA disconnected.'
         );
-      } catch (error) {
+      } catch {
         vscode.window.showErrorMessage(
-          `REA disconnect failed: ${String(error)}`
+          'REA disconnect failed. Reload the extension host before reconnecting.'
         );
       }
     }

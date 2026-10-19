@@ -5,6 +5,8 @@ export class ReaMcpClient {
   private client: Client | undefined;
   private transport: StdioClientTransport | undefined;
 
+  onDidDisconnect?: () => void;
+
   async connect(command: string, args: string[]): Promise<void> {
     if (this.client) {
       throw new Error('REA is already connected.');
@@ -20,6 +22,14 @@ export class ReaMcpClient {
       args,
       stderr: 'pipe'
     });
+
+    client.onclose = () => {
+      if (this.client === client) {
+        this.client = undefined;
+        this.transport = undefined;
+        this.onDidDisconnect?.();
+      }
+    };
 
     try {
       await client.connect(transport);
@@ -50,6 +60,16 @@ export class ReaMcpClient {
     } while (cursor);
 
     return tools;
+  }
+
+  async executeReadOnlyTool(name: string) {
+    if (name !== 'list_unknowns') {
+      throw new Error('Tool execution is not allowed.');
+    }
+    if (!this.client) {
+      throw new Error('REA is not connected.');
+    }
+    return this.client.callTool({ name, arguments: { offset: 0, limit: 50 } });
   }
 
   async disconnect(): Promise<void> {

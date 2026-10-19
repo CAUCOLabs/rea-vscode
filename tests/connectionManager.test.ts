@@ -95,4 +95,17 @@ describe('ConnectionManager', () => {
 
     expect(manager.getState()).toBe('connected');
   });
+  it('notifies subscribers when the MCP client closes unexpectedly', async () => {
+    const client = createClient();
+    const manager = new ConnectionManager(client);
+    const changed = vi.fn();
+    const subscription = manager.onDidChange(changed);
+    await manager.connect('node', []);
+    client.onDidDisconnect?.();
+    expect(manager.getState()).toBe('disconnected');
+    expect(manager.isConnected()).toBe(false);
+    expect(changed).toHaveBeenCalledTimes(3);
+    subscription.dispose();
+  });
+
 });
