@@ -88,12 +88,12 @@
     switch (message.type) {
       case 'status': {
         trusted = message.trusted; connected = message.state === 'connected'; busy = message.busy;
-        const connecting = message.state === 'connecting' || (!connected && busy);
+        const connecting = message.state === 'connecting';
         byId('connection-indicator').textContent = !trusted ? 'Workspace not trusted' : connected ? 'Ready' : connecting ? 'Starting REA…' : 'Not connected';
         byId('connection-indicator').className = connected ? 'connection-ready' : 'connection-offline';
         byId('reconnect').hidden = connected || connecting || !trusted;
         if (!trusted) byId('analysis-progress').textContent = 'Trust this workspace in VS Code before analyzing a website.';
-        else if (!connected && !connecting) byId('analysis-progress').textContent = 'REA could not connect. Check the installation in Advanced, then choose Reconnect.';
+        else if (!connected && !connecting) byId('analysis-progress').textContent = message.state === 'error' ? 'REA could not connect. See REA output for details, then choose Reconnect.' : 'The REA connection is closed. Choose Reconnect to continue; see REA output for details.';
         else if (connected && !reportAvailable && !busy && !hasAnalysisFeedback) byId('analysis-progress').textContent = 'Paste a website address to get started.';
         buttons(); break;
       }
@@ -116,7 +116,7 @@
         presentation = message.presentation ?? { status: 'Report needs review', readiness: 'Review the evidence in Advanced before preparing a brief.', canPrepare: false, components: [], interactions: [], resources: [], missing: ['More evidence is needed.'] };
         hasAnalysisFeedback = true;
         reportAvailable = true; canPrepare = presentation.canPrepare;
-        byId('analysis-progress').textContent = report.status === 'captured' ? 'Your analysis is ready. Review what was found and what is still unknown.' : 'We could not inspect this website. Try again; setup details are available in Advanced.';
+        byId('analysis-progress').textContent = report.status === 'captured' ? 'Your analysis is ready. Review what was found and what is still unknown.' : (report.evidence?.length ? 'Partial analysis retained. Review the captured evidence and the steps that could not finish in Advanced.' : 'We could not inspect this website. Try again; setup details are available in Advanced.');
         byId('analysis-meter').hidden = true;
         byId('report-target').textContent = report.target;
         byId('evidence-summary').textContent = `${report.target} — ${report.status}. ${report.summary}`;

@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
-import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isRecord, targetUrl } from './webToolPolicy';
 
@@ -69,7 +69,7 @@ function launchOwned(executable: string, args: string[]): OwnedProcess {
 const defaultRuntime: BrowserRuntime = {
   findExecutable: async () => {
     for (const candidate of browserCandidates()) {
-      try { await access(candidate, constants.X_OK); return candidate; } catch { /* Next installed browser. */ }
+      try { if (!(await stat(candidate)).isFile()) continue; await access(candidate, constants.X_OK); return candidate; } catch { /* Next installed browser. */ }
     }
   },
   createProfile: async () => {
@@ -96,11 +96,19 @@ const defaultRuntime: BrowserRuntime = {
   now: () => Date.now()
 };
 
-export async function startAnalysisBrowser(options: { url: string; signal: AbortSignal; allowed: () => boolean }, runtime: BrowserRuntime = defaultRuntime): Promise<BrowserLease> {
+export async function findBrowserExecutable(configured = ''): Promise<string | undefined> {
+  if (configured && (!isAbsolute(configured) || /[\x00-\x1f\x7f]/.test(configured))) throw new AnalysisBrowserError('Browser path must be an absolute executable path.');
+  for (const candidate of configured ? [configured] : browserCandidates()) {
+    try { if (!(await stat(candidate)).isFile()) continue; await access(candidate, constants.X_OK); return candidate; } catch { /* Next installed browser. */ }
+  }
+  if (configured) throw new AnalysisBrowserError('Configured browser is not executable. Run REA: Set Up REA.');
+}
+
+export async function startAnalysisBrowser(options: { url: string; signal: AbortSignal; allowed: () => boolean; executablePath?: string }, runtime: BrowserRuntime = defaultRuntime): Promise<BrowserLease> {
   const requested = targetUrl(options.url).href;
   const guard = () => { if (options.signal.aborted || !options.allowed()) throw new AnalysisBrowserError('Analysis stopped. Trust this workspace and reconnect before trying again.'); };
   guard();
-  const executable = await runtime.findExecutable(); guard();
+  const executable = options.executablePath ? await findBrowserExecutable(options.executablePath) : await runtime.findExecutable(); guard();
   if (!executable) throw new AnalysisBrowserError('Install Google Chrome or Chromium, then click Analyze again. REA uses a separate temporary browser profile.');
   const profile = await runtime.createProfile();
   let child: OwnedProcess | undefined;

@@ -1,6 +1,6 @@
 {
   "name": "rea-vscode",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "Integrate REA reverse engineering and automation tools into Visual Studio Code through MCP.",
   "main": "./dist/extension.js",
   "directories": {
@@ -11,7 +11,11 @@
     "watch": "node esbuild.mjs --watch",
     "check": "tsc --noEmit",
     "test": "vitest run",
-    "package": "npm run build && vsce package"
+    "package": "vsce package --no-dependencies",
+    "vscode:prepublish": "npm run build",
+    "verify:vsix": "python3 scripts/verify_vsix.py rea-vscode-0.4.0-darwin-arm64.vsix",
+    "vendor:engine": "node scripts/vendor-engine.mjs",
+    "runtime:prepare": "node scripts/prepare-platform-runtime.mjs"
   },
   "repository": {
     "type": "git",
@@ -37,7 +41,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
-    "@types/vscode": "^1.140.0",
+    "@types/vscode": "1.102.0",
     "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2",
@@ -86,6 +90,18 @@
       {
         "command": "rea.invokeTool",
         "title": "REA: Invoke Any Tool"
+      },
+      {
+        "command": "rea.setup",
+        "title": "REA: Set Up REA"
+      },
+      {
+        "command": "rea.diagnostics",
+        "title": "REA: Verify Installation"
+      },
+      {
+        "command": "rea.configureCopilot",
+        "title": "REA: Configure Copilot MCP"
       }
     ],
     "configuration": {
@@ -95,13 +111,33 @@
           "type": "string",
           "scope": "machine",
           "default": "node",
-          "description": "Executable used to launch the REA MCP server."
+          "description": "Optional Node.js override. The bundled Node.js runtime is preferred; a compatible system Node.js is used only if unavailable."
         },
         "rea.scriptPath": {
           "type": "string",
           "scope": "machine",
           "default": "",
-          "description": "Optional absolute path to the REA CLI script."
+          "description": "Optional absolute path to a custom REA scripts/rea.mjs. Empty uses the engine bundled with this extension."
+        },
+        "rea.browserPath": {
+          "type": "string",
+          "scope": "machine",
+          "default": "",
+          "description": "Optional absolute path to an installed Chrome, Chromium or Edge executable. Empty uses standard installation locations."
+        },
+        "rea.webOperationTimeoutMs": {
+          "type": "integer",
+          "default": 60000,
+          "minimum": 1,
+          "maximum": 3600000,
+          "description": "Absolute request timeout in milliseconds for browser target discovery, page inspection and screenshot capture."
+        },
+        "rea.bundleAnalysisTimeoutMs": {
+          "type": "integer",
+          "default": 300000,
+          "minimum": 1,
+          "maximum": 3600000,
+          "description": "Absolute request timeout in milliseconds for static JavaScript bundle analysis. Timeout cancels only the request; it does not disconnect MCP."
         }
       }
     },
@@ -129,5 +165,8 @@
         "label": "REA full engine"
       }
     ]
-  }
+  },
+  "extensionKind": [
+    "ui"
+  ]
 }

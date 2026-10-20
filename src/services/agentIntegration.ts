@@ -1,3 +1,4 @@
+import { engineScript, resolveEngineLaunch } from './engineRuntime';
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { access, stat } from 'node:fs/promises';
@@ -8,8 +9,7 @@ export function launchConfiguration(executable: string, scriptPath: string) {
   executable = executable.trim(); scriptPath = scriptPath.trim();
   if (!executable) throw new Error('REA executable cannot be empty.');
   if (scriptPath && !path.isAbsolute(scriptPath)) throw new Error('REA scriptPath must be absolute.');
-  return scriptPath ? { command: executable, args: [scriptPath, 'mcp'] }
-    : { command: 'npx', args: ['--no-install', 'rea-agents', 'mcp'] };
+  return { command: executable, args: [engineScript(scriptPath), 'mcp'] };
 }
 
 export function codexConfiguration(command: string, args: string[]) {
@@ -29,16 +29,15 @@ export async function validateCodexLaunch(executable: string, scriptPath: string
       try {
         if (!(await stat(candidate)).isFile()) continue;
         await access(candidate, process.platform === 'win32' ? constants.F_OK : constants.X_OK);
+        if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(candidate)) continue;
         return candidate;
       } catch { /* Try the next PATH entry. */ }
     }
     throw new Error(`REA executable was not found or is not executable: ${command}. Check REA Settings.`);
   };
   await resolveCommand(executable.trim());
-  if (scriptPath.trim()) {
-    if (/[\x00-\x1f\x7f]/.test(scriptPath) || !(await stat(scriptPath.trim())).isFile()) throw new Error('REA scriptPath must reference an existing readable file.');
-    await access(scriptPath.trim(), constants.R_OK);
-  }
+  if (/[\x00-\x1f\x7f]/.test(launch.args[0]) || !(await stat(launch.args[0])).isFile()) throw new Error('REA engine script must reference an existing readable file.');
+  await access(launch.args[0], constants.R_OK);
   return { ...launch, command: await resolveCommand(launch.command) };
 }
 
@@ -55,11 +54,26 @@ export function mergeCodexConfiguration(existing: string, command: string, args:
   return merged;
 }
 
+export function mergeAgentConfiguration(existing: string, command: string, args: string[], browserScript: string, browserNode = 'node', browserPath = ''): string | undefined {
+  const config = parse(existing);
+  const servers = config.mcp_servers;
+  if (servers !== undefined && (!servers || typeof servers !== 'object' || Array.isArray(servers))) throw new Error('Existing mcp_servers must be a TOML table.');
+  let result = existing;
+  if (!servers || !Object.hasOwn(servers, 'rea')) result = mergeCodexConfiguration(result, command, args)!;
+  if (!servers || !Object.hasOwn(servers, 'rea_browser')) {
+    result += `\n[mcp_servers.rea_browser]\ncommand = ${JSON.stringify(browserNode)}\nargs = ${JSON.stringify(browserPath ? [browserScript, '--browser-executable', browserPath] : [browserScript])}\nstartup_timeout_sec = 60\ntool_timeout_sec = 60\ndefault_tools_approval_mode = "prompt"\n`;
+  }
+  try { parse(result); } catch { throw new Error('Existing MCP configuration cannot be safely extended. Add rea_browser manually.'); }
+  return result === existing ? undefined : result;
+}
+
 export function registerAgentIntegration(context: vscode.ExtensionContext) {
+  const browserScript = () => context.asAbsolutePath('dist/browserServer.js');
+  const routerScript = () => context.asAbsolutePath('dist/routerServer.js');
   const changed = new vscode.EventEmitter<void>();
   const launch = () => {
     const config = vscode.workspace.getConfiguration('rea');
-    return launchConfiguration(config.get('executable', 'node'), config.get('scriptPath', ''));
+    return launchConfiguration(config.get('executable', 'node'), engineScript(config.get('scriptPath', '')));
   };
   context.subscriptions.push(changed,
     vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('rea')) changed.fire(); }),
@@ -70,11 +84,28 @@ export function registerAgentIntegration(context: vscode.ExtensionContext) {
       provideMcpServerDefinitions: () => {
         if (!vscode.workspace.isTrusted) return [];
         const { command, args } = launch();
-        return [new vscode.McpStdioServerDefinition('REA full engine', command, args, {}, JSON.stringify([command, args]))];
+        const browserPath = vscode.workspace.getConfiguration('rea').get<string>('browserPath', '');
+        const enginePath = args[0];
+        return [new vscode.McpStdioServerDefinition('REA full engine', command, args, {}, JSON.stringify([command, args])),
+          new vscode.McpStdioServerDefinition('REA isolated browser', command, browserPath ? [browserScript(), '--browser-executable', browserPath] : [browserScript()], {}, JSON.stringify([command, browserPath, browserScript()])),
+          new vscode.McpStdioServerDefinition('REA Universal Tool Router', command, [routerScript(), enginePath], {}, JSON.stringify([command, routerScript(), enginePath]))];
       },
       resolveMcpServerDefinition: definition => {
         if (!vscode.workspace.isTrusted) throw new Error('REA requires a trusted workspace.');
-        return definition;
+        const config = vscode.workspace.getConfiguration('rea');
+        // VS Code resolves definitions at start time. Resolve PATH/version here
+        // so agents receive an absolute compatible Node executable, even when
+        // their MCP launcher does not inherit the Extension Host's PATH.
+        return resolveEngineLaunch(config.get('executable', 'node'), config.get('scriptPath', '')).then(({ command }) => {
+          if (!vscode.workspace.isTrusted) throw new Error('REA requires a trusted workspace.');
+          if (definition instanceof vscode.McpStdioServerDefinition) definition.command = command;
+          return definition;
+        }).catch(async error => {
+          const detail = error instanceof Error ? error.message : 'No compatible Node.js runtime was found.';
+          const action = await vscode.window.showErrorMessage(`REA MCP could not start. ${detail}`, 'Set up REA');
+          if (action === 'Set up REA') await vscode.commands.executeCommand('rea.setup');
+          throw error;
+        });
       }
     }));
   }
@@ -92,17 +123,17 @@ export function registerAgentIntegration(context: vscode.ExtensionContext) {
       const folder = selected[0];
       if (folder.scheme !== 'file' || (await vscode.workspace.fs.stat(folder)).type !== vscode.FileType.Directory) throw new Error('Select an existing local project folder.');
       const config = vscode.workspace.getConfiguration('rea');
-      const { command, args } = await validateCodexLaunch(config.get('executable', 'node'), config.get('scriptPath', ''));
+      const { command, args } = await resolveEngineLaunch(config.get('executable', 'node'), config.get('scriptPath', ''));
       const directory = vscode.Uri.joinPath(folder, '.codex');
       const target = vscode.Uri.joinPath(directory, 'config.toml');
       let existing = '';
       let existed = false;
       try { existing = Buffer.from(await vscode.workspace.fs.readFile(target)).toString('utf8'); existed = true; }
       catch (error) { if (!(error instanceof vscode.FileSystemError) || error.code !== 'FileNotFound') throw error; }
-      const merged = mergeCodexConfiguration(existing, command, args);
+      const merged = mergeAgentConfiguration(existing, command, args, browserScript(), command, config.get('browserPath', ''));
       if (merged === undefined) {
         await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(target));
-        void vscode.window.showWarningMessage('This project already defines mcp_servers.rea. Existing REA and other settings were preserved. Edit that table manually if needed, then reload Codex in the window using this project.');
+        void vscode.window.showWarningMessage('This project already defines mcp_servers.rea and mcp_servers.rea_browser. Existing settings were preserved. Edit that table manually if needed, then reload Codex in the window using this project.');
         return;
       }
       if (!vscode.workspace.isTrusted) throw new Error('REA requires a trusted window.');

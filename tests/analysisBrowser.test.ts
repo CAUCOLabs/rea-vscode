@@ -107,3 +107,10 @@ describe('Owned analysis browser orchestration', () => {
     expect(browserCandidates('freebsd')).toEqual([]);
   });
 });
+
+it('rejects a relative configured browser before creating a profile or launching software', async () => {
+  const { runtime, options } = fixture();
+  await expect(startAnalysisBrowser({ ...options, executablePath: './chrome' }, runtime)).rejects.toThrow('absolute executable path');
+  expect(runtime.createProfile).not.toHaveBeenCalled();
+  expect(runtime.launch).not.toHaveBeenCalled();
+});

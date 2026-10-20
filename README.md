@@ -1,186 +1,101 @@
-REA for VS Code
+# REA for VS Code — 0.4.0
 
-Bring reverse engineering, inspection, and automation tools directly into Visual Studio Code.
+Inspect websites from VS Code and connect coding agents to the original REA engine, bundled with this extension. This is an independent CAUCOLabs extension, not an official REA release. The original [REA engine](https://github.com/morluto/rea) was created by **morluto**; its source is included unchanged under its MIT license.
 
-REA for VS Code is an open-source Visual Studio Code extension developed by CAUCOLabs, designed to integrate the powerful capabilities of the REA reverse engineering framework into the developer’s everyday workflow.
+## Install without cloning this repository
 
-The extension aims to provide a convenient interface for interacting with REA tools without leaving the editor.
+1. Obtain the VSIX matching your OS and CPU from the distributor you trust: `darwin-arm64`, `darwin-x64`, `win32-x64` or `linux-x64`.
+2. In desktop VS Code **1.102 or newer**, open Extensions → **… → Install from VSIX…**, select the file, and reload if prompted. Alternatively run `code --install-extension /path/to/rea-vscode-0.4.0-<platform>.vsix`.
+3. Open a trusted workspace, select **REA** in the Activity Bar and click **Set up REA**. You can also run **REA: Set Up REA** from the Command Palette.
 
-Project Status: Website analysis application — automatic connection, a dedicated analysis browser, readable findings and coding-agent reconstruction briefs. Web is implemented; GitHub and Desktop App are coming soon.
+You do not need this repository, npm, F5, source edits, or extension development dependencies to install the VSIX. This milestone does not publish to the Marketplace.
 
-Overview
+## Prerequisites
 
-REA for VS Code connects Visual Studio Code with the REA engine using the Model Context Protocol (MCP).
+- No separate Node.js installation is required. Each platform VSIX includes Node.js 26.8.1 and REA 6.7.0. A compatible system Node.js (`^22.19.0 || ^24.11.0 || >=26.0.0`) is an optional fallback if the bundled runtime is unavailable.
+- For websites: an installed **Google Chrome, Chromium or Microsoft Edge** compatible with Chrome DevTools Protocol. REA never downloads a browser. Standard system locations are checked; a custom executable path is supported.
+- Coding agent integration is optional: install Codex or enable Copilot/MCP separately. Organization policies may disable MCP.
 
-The project focuses on making REA’s capabilities more accessible through an integrated development environment while maintaining compatibility with the original framework.
+The platform VSIX includes the official Node.js runtime, REA's engine entry point, platform-installed production dependencies, MIT licenses and third-party notices. Browsers, Wireshark/tshark, Ghidra, Hopper and other analysis backends remain optional external dependencies and are not installed by the extension. Optional Frida is excluded.
 
-Planned Features
+## First run
 
-* Native VS Code Integration: Access REA functionality directly from the editor.
-* MCP Connectivity: Communicate with the REA MCP server.
-* Tool Discovery: Explore available REA tools.
-* Tool Execution: Execute supported operations through an integrated interface.
-* Browser Inspection: Access supported browser inspection capabilities.
-* Automation Workflows: Run supported automation tasks.
-* Results Viewer: Display structured results and execution logs.
-* AI-Assisted Workflows: Future support for natural-language interaction with REA tools.
-* Configurable Environment: Manage REA installation paths and connection settings.
+The bundled Node runtime and REA engine are selected automatically. **REA: Set Up REA** lets you select an optional system Node fallback and detects a browser or accepts an absolute browser executable path. No Node path needs to be configured for normal use.
 
-The sidebar currently supports connection controls, tool discovery and search, schema inspection, and the read-only list_unknowns query. Other features listed above remain development goals.
+Only machine-scoped User Settings are saved:
 
-Architecture
+| Setting | Purpose |
+| --- | --- |
+| `rea.executable` | Optional Node.js override. Bundled Node.js is preferred; a compatible system Node.js is a fallback. |
+| `rea.scriptPath` | Optional absolute path to a custom REA `scripts/rea.mjs`. Empty uses the bundled engine. |
+| `rea.browserPath` | Optional absolute Chrome/Chromium/Edge executable; empty detects standard locations. |
 
-Visual Studio Code
-        |
-        v
-REA for VS Code
-        |
-        v
-MCP Client
-        |
-        v
-REA MCP Server
-        |
-        v
-REA Tools and Services
+For a macOS browser app, select its actual binary under `.app/Contents/MacOS`, not the `.app` directory. Settings can also be edited through VS Code Settings; no source files need editing.
 
-The extension is designed as an independent integration layer.
+Choose **Verify connection** to run your selected Node and bundled engine, complete the MCP handshake and discover the live catalog. Then optionally configure an agent. **REA: Verify Installation** repeats diagnostics, reconnects the engine and reports missing browser prerequisites. A connection check does not certify every engine provider or tool. Setup never installs packages or uses `npx`.
 
-The original REA engine remains a separate project.
+If startup fails, check **Output → REA**, Workspace Trust, Node version and executable paths. Run setup again after moving Node. Browser failures include actionable messages; remote network policy and browser sandbox constraints may require changes outside the extension.
 
-Technology Stack
+## Use REA
 
-* TypeScript
-* Visual Studio Code Extension API
-* Model Context Protocol (MCP)
-* Node.js
-* REA Engine
+Paste an HTTP(S) website URL and click **Analyze**. The extension launches a separate headless browser with a temporary profile and loopback debugging port. It passively inspects the page, captures a screenshot and presents findings. **View Analysis**, **Prepare Reconstruction** and **Export Report** expose further results. GitHub and Desktop App analysis are currently placeholders.
 
-Development Roadmap
+The primary screen does not require catalog configuration. **Advanced / Developer Tools** offers dynamic tool discovery, schemas and a narrow read-only query. **REA: Invoke Any Tool** is an advanced command with a separate explicit execution prompt. Catalog size depends on the engine; discovering a tool does not mean its provider is installed or its behavior has been tested.
 
-Phase 1 — Foundation
+## Codex
 
-* Initialize the VS Code extension project.
-* Implement basic extension activation.
-* Establish communication with the REA MCP server.
-* Implement connection status and error handling.
+After setup, run **REA: Configure Codex MCP** and choose the local project used by Codex. The extension adds missing `[mcp_servers.rea]` and `[mcp_servers.rea_browser]` entries to that project's `.codex/config.toml`, with absolute paths to installed Node and the extension's bundled engine/browser entry points. Existing definitions, comments, unrelated settings and credentials are preserved. Review an existing definition manually if it needs updating. No global Codex settings are changed.
 
-Phase 2 — Tool Integration
+Trust the project in Codex, then restart Codex CLI there or reload the VS Code window running Codex. Each MCP server owns its own session. After upgrading/moving/uninstalling this extension, review existing browser definitions: generated absolute extension paths can become stale and are deliberately not overwritten automatically. Remove the two tables to regenerate them if appropriate.
 
-* Discover available MCP tools.
-* Implement tool execution.
-* Display structured results.
-* Introduce configuration management.
+Codex uses its own stdio MCP configuration, independent of Copilot's registry. See [official Codex MCP configuration](https://developers.openai.com/codex/mcp/) and [the browser lifecycle guide](docs/codex-browser.md).
 
-Phase 3 — Developer Experience
+## Copilot
 
-* Build an integrated sidebar.
-* Improve execution workflows.
-* Add history and logging.
-* Introduce permission controls.
+Run **REA: Configure Copilot MCP**, or open **MCP: List Servers**. The extension registers **REA full engine**, **REA isolated browser**, and **REA Universal Tool Router** through VS Code's MCP server definition provider. The router exposes three stable tools: `rea_search_tools`, `rea_get_tool_schema`, and `rea_execute_tool`. Search and schema lookup do not execute REA operations. Execution is marked non-read-only/destructive so compatible clients request their normal approval; the original REA engine still validates and enforces its own tool behavior. The full engine and platform-matched Node.js runtime are bundled; no separate REA checkout or Node installation is required. Start the servers and review VS Code's trust prompts. Copilot and MCP must be enabled; the extension does not install Copilot or bypass policy. Execution requires a trusted workspace. See [VS Code MCP integration](https://code.visualstudio.com/api/extension-guides/ai/mcp).
 
-Phase 4 — AI Integration
+Codex and other stdio MCP clients can use the router with the same `node <extension>/dist/routerServer.js <extension>/runtime/rea/scripts/rea.mjs` launch pattern. This is an optional server definition; existing Codex MCP configuration is left unchanged. Configure the client to request approval for `rea_execute_tool` calls.
 
-* Integrate optional AI providers.
-* Enable natural-language tool interaction.
-* Support multi-step workflows.
-* Introduce supervised agent capabilities.
+## Automatic agent browser
 
-Requirements
+The bundled `rea_browser` companion exposes two lifecycle tools. An agent calls `acquire_browser` with a URL, passes the returned `cdp_endpoint` and `allowed_origins` to the bundled engine's `list_browser_targets`, and uses the returned target ID for inspection/screenshots. It must collect needed evidence before calling `release_browser` with the returned lease ID. This companion does not modify or proxy the original engine's catalog.
 
-Development and runtime requirements will be documented as implementation progresses.
+Profiles are created in the operating system temporary directory, never the extension installation or source checkout. Normal release/disconnect cleans owned processes and profiles. An abrupt host/OS crash can leave temporary files or processes; guaranteed cleanup after forced termination is not claimed. Existing user browser profiles are not used.
 
-The initial integration will target the REA MCP server.
+## Platform and verification limits
 
-Installation
+The macOS arm64 package has passed local checks and a packaged MCP smoke test. GitHub Actions builds and tests macOS x64, Windows x64 and Linux x64 separately; those targets remain unvalidated until their matrix jobs complete. VS Code remote and web extension hosts are unverified. See [distribution and validation record](docs/distribution-0.4.0.md).
 
-The extension is not yet available for installation.
+This is a desktop extension. VS Code for the Web, remote SSH/WSL/containers, restricted browser sandboxes and all combinations of engine providers/agents are not validated. The extension prefers the local UI extension host; Node, REA and browser paths must refer to that host. No cross-host path translation is provided. Browser inspection is a point-in-time observation; it does not prove full application behavior or recover original source. Reports may contain target data; review before sharing.
 
-Development builds and installation instructions will be provided in future releases.
+The Webview uses a Content Security Policy and text rendering. Tool output is untrusted. Workspace Trust guards execution; installed VS Code APIs do not provide a trust-revocation event for automatic disconnection. Each integration has separate engine state/evidence. Full catalog exposure is not exhaustive tool validation.
 
-Using REA
+## Build and package (maintainers only)
 
-Open REA, paste a website URL and click **Analyze**. REA attempts to connect automatically and opens a separate temporary analysis browser. Review the components, untested controls, possible technologies, reconstruction readiness and missing information. **View Analysis** expands readable findings; **Prepare Reconstruction** generates a coding-agent brief without claiming to build the application; **Export Report** saves Markdown to your chosen destination. GitHub and Desktop App are explicitly coming soon.
+```sh
+npm ci
+npm run check
+npm test
+npm run build
+git diff --check
+npm run package
+npm run verify:vsix
+```
 
-Chrome/Chromium must be installed in a supported location and the separate REA engine must be configured once. If connection fails, use **Reconnect**; installation settings and diagnostics are under **Advanced / Developer Tools**. No manual browser profile, port, target or schema setup is needed on the primary screen. See [setup, security boundaries and one end-to-end test](docs/web-target-analyzer.md).
+`npm run runtime:prepare -- --target <platform>` downloads and checksum-verifies the official Node runtime, installs REA's locked production dependencies on a native runner (including the matching `@lydell/node-pty` binary), and validates its load before packaging. GitHub Actions executes this matrix on native runners and uploads one VSIX per target. `.vscodeignore` includes only distributable files, target Node and curated `runtime/rea`. The VSIX checker validates actual archive contents and checks common path/secret patterns; it is not an exhaustive security audit.
 
-Sidebar MVP development guide
+Further implementation notes: [full engine access](docs/full-engine-access.md), [web analyzer](docs/web-target-analyzer.md), [Codex browser](docs/codex-browser.md).
 
-1. Install dependencies with `npm ci` and run `npm run build`.
-2. Open this extension repository in VS Code. Review the source before trusting the workspace.
-3. In User Settings, set `rea.executable` to the absolute path of your Node.js executable and `rea.scriptPath` to the absolute path of the separate REA installation's `scripts/rea.mjs`. Use `command -v node` on macOS/Linux or `where node` on Windows to locate Node. Absolute executable paths avoid VS Code's reduced PATH on macOS. These settings have machine scope; do not put local paths or credentials in this repository.
-4. Press F5 and select **Run REA Extension**. This starts an Extension Development Host.
-5. In the development host, open a trusted workspace and select the **REA** Activity Bar icon. REA connects automatically. The primary screen is the website analyzer; expand **Advanced / Developer Tools** for the explorer steps below.
-6. Click **Connect**. The sidebar retrieves the tool catalog from the running server. If connecting with the command palette instead, click **Refresh tools** afterward.
-7. Search names or descriptions in the compact scrollable list. Tools are grouped by their literal name prefix (for example `list_*`), not by inferred capabilities. Groups start collapsed; use **Expand All** / **Collapse All** or expand one group. Matching groups open while searching. The list scrolls independently, and the search/navigation section stays accessible while browsing details. Select a name to highlight it and inspect vertical parameter cards with types, required/optional status, defaults, constraints, and collapsible descriptions. Expand **Raw JSON Schema** for composite or nested constraints. Non-allowlisted tools remain inspection-only.
-8. Select **list_unknowns**, edit the optional status/severity/domain filters and pagination fields, then click **Run read-only query**. Only this tool displays an executable editor and Run control. Defaults are `offset: 0` and `limit: 50`; the local page-size limit is 100. Blank optional filters are omitted. Invalid values are rejected in the UI and independently in the Extension Host/client before any MCP call. An empty result is valid for a fresh session. The result explicitly shows **Success** or **Error**, prefers MCP `structuredContent`, and otherwise parses JSON text blocks or displays plain text. Expand **Original MCP response** to inspect the redacted response envelope (the existing output limit still applies). No other tool can execute through the advanced explorer. The separate analyzer has its own reviewed three-operation passive capture policy.
-9. Click **Disconnect** to close the MCP connection. The catalog and result are cleared.
+## Credits and licenses
 
-If `rea.scriptPath` is empty, the existing `npx --no-install rea-agents mcp` fallback is retained. Its availability is not validated across installations; an explicit Node executable and REA script path are recommended for development.
+**REA for VS Code**: independent integration, VS Code interface and browser lifecycle companion by CAUCOLabs, under [MIT](LICENSE), Copyright (c) 2026 CAUCO70 / CAUCOLabs.
 
-Security and validation limits
+**Original REA**: created by **morluto**, [github.com/morluto/rea](https://github.com/morluto/rea), MIT, Copyright (c) 2026 morluto. Its source is bundled unchanged; [LICENSE-REA](LICENSE-REA), upstream dependency notices and required licenses are preserved. This is an unofficial, independent extension and is not affiliated with or endorsed by the original maintainer. The extension's license does not replace the engine's license or its dependencies' licenses.
 
-- Untrusted workspaces cannot start REA through the Connect command. Execution also checks trust and connection status in the extension host; Webview messages cannot supply tool names, export paths, or commands. The primary analyzer accepts only a target URL; it owns a fresh browser profile and derives its loopback connection internally. Browser flags and endpoints cannot be supplied by the Webview. Execution messages accept only a flat, bounded arguments object, checked against the cached live input schema and explicit local allowlist. Argument values are never logged or persisted.
-- The view uses a nonce-based Content Security Policy, local resources only, and text-only rendering of server content. It does not persist results. Displayed results are limited to 100,000 characters and known credential fields/token formats are redacted before delivery. Redaction cannot identify every secret embedded in arbitrary prose; do not load sensitive investigation data into this prototype.
-- Installed stable VS Code types expose `workspace.isTrusted` and `onDidGrantWorkspaceTrust`, but no trust-revocation event. Automatic disconnection on revocation is not implemented. Existing lifecycle limitations include inability to cancel a connection in progress and no verified termination of all descendant processes.
-- The selected operation was inspected in the separate REA source: `SESSION_TOOL_CONTRACTS` declares `list_unknowns` read-only, and `registerSessionRecordTools.ts` calls `session.listUnknownsPage`. No target file or external provider is needed. The extension enables execution only when that exact name is present in the live catalog and its schema is supported; it assumes the configured server is the intended REA installation. Tool names and `readOnlyHint` annotations never authorize additional tools.
-- `npm test` covers command-level Workspace Trust guards, catalog delivery, message validation, the execution allowlist, redaction, and connection state notifications using SDK/VS Code mocks. Presentation tests execute the shipped Webview scripts with a small DOM double and cover prefix grouping, compact names, selection, schema parameters, structured/error results, raw response access, and hostile output. Browser layout and CSP enforcement require a real Extension Development Host.
-- The baseline sidebar MVP was manually verified by the user inside VS Code: connection, 207 dynamically loaded tools, search, selection, descriptions, schemas, and successful `list_unknowns` execution with displayed results. REA Explorer v0.2 navigation, cards, and parameter editing still require visual verification.
-- Direct stdio checks against local REA verified `list_unknowns` and the live schema. A parameterized call through the extension client also succeeded. These checks verify the engine/client operation, not the sidebar UI.
+Redistributed JavaScript dependency notices are included in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). Browsers and agent products remain subject to their own licenses and terms.
 
-Parameterized execution schema support
+### Web analysis timeouts (0.3.2)
 
-The editor intentionally supports only the verified `list_unknowns` input shape: five properties (`status`, `severity`, `domain`, `offset`, `limit`), an object with `additionalProperties: false`, and an optional JSON Schema 2020-12 dialect declaration. Supported constraints are string enums, minimum/maximum string length, safe integers, inclusive/exclusive numeric bounds, required properties, and scalar defaults. Root/field titles, descriptions, examples, and the dialect declaration are metadata. Unknown validation keywords, references, unions, nested input objects/arrays, patterns, formats, changed property names/types, and other schema dialects block execution. The raw schema and details remain inspectable.
+`rea.webOperationTimeoutMs` defaults to 60,000 ms for discovery, page inspection and screenshots. `rea.bundleAnalysisTimeoutMs` defaults to 300,000 ms for static script analysis. Both accept integer milliseconds from 1 to 3,600,000. Changes apply to subsequent operations. These extension settings are independent of Codex MCP configuration.
 
-Local policy always supplies bounded pagination (offset 0, limit 50 when omitted; limit 1–100), trims the domain filter as REA does, and limits strings to 4096 characters. These local limits may be stricter than the server schema. Changes to a tool or schema require explicit review before extending this subset or the allowlist. Switching tools or refreshing the catalog resets unsent editor values; nothing is saved to disk.
-
-Original Project and Attribution
-
-This extension is built to integrate with REA, an open-source reverse engineering framework created by morluto.
-
-Original REA repository:
-
-https://github.com/morluto/rea
-
-REA is distributed under the MIT License.
-
-Copyright (c) 2026 morluto.
-
-REA for VS Code is an independent community-developed extension.
-
-It is not an official REA release and is not affiliated with or endorsed by the original project maintainer.
-
-All rights to the original REA source code remain with their respective copyright holders.
-
-Extension Development
-
-REA for VS Code
-
-Developed and maintained by CAUCOLabs.
-
-The extension’s integration architecture, Visual Studio Code interface, and extension-specific functionality are developed as an independent project.
-
-Contributing
-
-Contributions, bug reports, feature requests, and technical discussions are welcome.
-
-Contribution guidelines will be published as the project develops.
-
-Security
-
-Reverse engineering and automation tools may interact with external processes, files, and applications.
-
-The extension will prioritize explicit user authorization, controlled tool execution, and transparent reporting of operations.
-
-License
-
-REA for VS Code is licensed under the MIT License.
-
-Copyright (c) 2026 CAUCOLabs.
-
-The original REA project is separately licensed under the MIT License, Copyright (c) 2026 morluto.
-
-See the respective license notices for details.
-### Full engine access for coding agents
-
-The full engine is now exposed separately from the narrow automatic analyzer/editor flows. **Copilot** uses the native VS Code MCP provider **REA full engine**. **Codex** uses **REA: Configure Codex MCP**, which configures a trusted project's `.codex/config.toml` without assuming compatibility with VS Code's provider registry. **REA: Invoke Any Tool** permits explicitly authorized calls to any discovered tool. See [setup, contracts, orchestration and validation](docs/full-engine-access.md) for the distinction between 207 interface-accessible tools and the subset actually tested, including dependency requirements and host acceptance checks still needed.
+Timeout cancels the individual request without disconnecting MCP or retrying it. Completed page and screenshot evidence remains in a partial report. Real transport failures remain visible as disconnected. Diagnostics log fixed stderr categories and timing, never raw stderr or arbitrary protocol error text. See [the 0.3.2 investigation](docs/connection-lifecycle-0.3.2.md) for evidence and limitations.

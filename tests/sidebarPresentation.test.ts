@@ -253,6 +253,16 @@ describe('Simple REA application experience', () => {
     expect(nodes['analyze-target'].disabled).toBe(false);
     expect(nodes['coming-soon'].hidden).toBe(true);
   });
+  it('shows a real connection loss immediately while analysis is busy', () => {
+    const { nodes, send } = setup();
+    send({ type: 'status', state: 'connected', trusted: true, busy: true });
+    send({ type: 'status', state: 'disconnected', trusted: true, busy: true });
+    expect(nodes['connection-indicator'].textContent).toBe('Not connected');
+    expect(nodes['analysis-progress'].textContent).toContain('connection is closed');
+    expect(nodes.reconnect.hidden).toBe(false);
+    expect(nodes['analyze-target'].disabled).toBe(true);
+  });
+
   it('offers Reconnect without technical connection details', () => {
     const { nodes, send, sent } = setup();
     send({ type: 'status', state: 'error', trusted: true, busy: false });

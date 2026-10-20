@@ -1,3 +1,5 @@
+import { initializeEngineRuntime, resolveEngineLaunch } from './services/engineRuntime';
+import { registerSetup } from './services/setup';
 import * as vscode from 'vscode';
 import { launchConfiguration, registerAgentIntegration } from './services/agentIntegration';
 
@@ -6,15 +8,28 @@ import { ConnectionManager } from './services/connectionManager';
 import { ReaSidebarProvider } from './views/reaSidebarProvider';
 import { redact } from './views/sidebarProtocol';
 
-const rea = new ReaMcpClient();
+const rea = new ReaMcpClient(() => {
+  const config = vscode.workspace.getConfiguration('rea');
+  return { webOperationTimeoutMs: config.get<number>('webOperationTimeoutMs'), bundleAnalysisTimeoutMs: config.get<number>('bundleAnalysisTimeoutMs') };
+});
 const connectionManager = new ConnectionManager(rea);
 
 let output: vscode.OutputChannel;
 
 export function activate(context: vscode.ExtensionContext) {
+  initializeEngineRuntime(context.extensionUri.fsPath);
   registerAgentIntegration(context);
+  registerSetup(context, async () => {
+    if (connectionManager.isConnected()) await connectionManager.disconnect();
+    await vscode.commands.executeCommand('rea.connect', true);
+    if (!connectionManager.isConnected()) return false;
+    await rea.listTools();
+    return true;
+  });
   output = vscode.window.createOutputChannel('REA');
 
+  rea.onDiagnostic = message => output.appendLine(`[${new Date().toISOString()}] ${String(redact(message))}`);
+  connectionManager.onDidChange(() => output.appendLine(`MCP state: ${connectionManager.getState()}`));
   output.appendLine('REA for VS Code activated.');
 
   const sidebar = new ReaSidebarProvider(context.extensionUri, rea, connectionManager);
@@ -41,7 +56,7 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showInformationMessage(
             'REA is already connected.'
           );
-          return;
+          return true;
         }
 
         const config = vscode.workspace.getConfiguration('rea');
@@ -49,7 +64,7 @@ export function activate(context: vscode.ExtensionContext) {
         const scriptPath = config.get<string>('scriptPath', '').trim();
         const executable = config.get<string>('executable', 'node').trim();
 
-        const { command, args } = launchConfiguration(executable, scriptPath);
+        const { command, args } = await resolveEngineLaunch(executable, scriptPath);
 
         output.appendLine('Connecting to REA MCP server.');
 
@@ -83,15 +98,19 @@ export function activate(context: vscode.ExtensionContext) {
         if (quiet !== true) vscode.window.showInformationMessage(
           'REA is ready.'
         );
-      } catch {
+        return true;
+      } catch (error) {
+        rea.onDiagnostic?.(`Connect failed: ${error instanceof Error ? error.message : String(error)}`);
         const message = 'Unable to connect. Check Workspace Trust, the REA executable, and the absolute script path in user settings.';
 
         output.appendLine(`Connection error: ${message}`);
         if (quiet !== true) output.show(true);
 
-        if (quiet !== true) vscode.window.showErrorMessage(
-          'REA could not start. Check the installation in REA Settings, then reconnect.'
-        );
+        if (quiet !== true) {
+          const action = await vscode.window.showErrorMessage('REA could not start. Run setup to install or select a compatible Node.js runtime.', 'Set up REA');
+          if (action === 'Set up REA') await vscode.commands.executeCommand('rea.setup');
+        }
+        return false;
       }
     }
   );

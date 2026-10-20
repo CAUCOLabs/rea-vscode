@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { bundleBudgetReason } from './bundleBudget';
 import { redact } from '../services/sanitization';
 import { CDP_SETUP, cdpEndpoint, isRecord, targetUrl, type WebTool } from '../services/webToolPolicy';
 
@@ -65,6 +66,7 @@ export async function analyzeWebTarget(options: {
   const findings: Finding[] = [];
   const evidence: EvidenceSource[] = [];
   let captured = false;
+  let incomplete = false;
   let screenshotImage: WebReport['screenshot'];
   let currentStep: WebTool = 'list_browser_targets';
   const add = (classification: Classification, area: string, detail: unknown, source: string, e?: Evidence, path = '') => {
@@ -150,14 +152,20 @@ export async function analyzeWebTarget(options: {
           screenshotImage = { dataBase64: artifact.data_base64, evidenceId: screenshot.id, digest: screenshot.digest, sha256: artifact.sha256, width: viewport.width as number, height: viewport.height as number };
           coverage(screenshot, 'capture_web_screenshot');
         } catch (error) {
-          guard();
+          incomplete = true;
+          if (options.signal.aborted) guard();
           add('UNKNOWN', 'Visual evidence', `Screenshot failed: ${error instanceof Error ? error.message : 'Unknown capture failure'}. No verified visual artifact was retained.`, 'capture_web_screenshot');
         }
       } else {
         add('UNKNOWN', 'Visual evidence', 'The configured REA catalog does not include capture_web_screenshot; no screenshot was captured.', 'REA live tool catalog', page, 'available tools');
       }
       options.progress(65, 'Statically analyzing observed JavaScript; source-map fetching disabled…');
+      const budgetReason = bundleBudgetReason(page.data.scripts);
       try {
+        if (budgetReason) {
+          add('UNKNOWN', 'JavaScript analysis budget', `${budgetReason} Static analysis skipped before source capture; page and screenshot evidence retained.`, 'local admission policy', page, 'normalized_result.scripts');
+          throw new Error('Bundle admission budget rejected.');
+        }
         const bundle = await call('analyze_web_bundle', id);
         if (targetUrl(text(rec(bundle.data.capture).target_url)).href !== url.href) throw new Error('Bundle target changed.');
         coverage(bundle, 'analyze_web_bundle');
@@ -169,28 +177,31 @@ export async function analyzeWebTarget(options: {
         for (const [i, item] of list(bundle.data.inferences).slice(0, 15).entries()) add('INFERRED', 'Technology candidates', `${item.kind}: ${item.value}; provider confidence=${item.confidence}; basis=${JSON.stringify(item.basis)}. Candidate, not a verified runtime dependency.`, 'analyze_web_bundle', bundle, `normalized_result.inferences[${i}]`);
         for (const [i, item] of list(bundle.data.unknowns).slice(0, 10).entries()) add('UNKNOWN', 'JavaScript analysis', `${item.dimension}: ${item.reason}`, 'analyze_web_bundle', bundle, `normalized_result.unknowns[${i}]`);
       } catch {
-        guard();
-        add('UNKNOWN', 'JavaScript analysis', 'Static bundle analysis unavailable, failed, exceeded its time budget, or returned an incompatible result. Source maps and extra-origin fetching were not enabled.', 'analyze_web_bundle');
+        incomplete = true;
+        if (options.signal.aborted) guard();
+        if (!budgetReason) add('UNKNOWN', 'JavaScript analysis', 'Static bundle analysis unavailable, failed, exceeded its time budget, or returned an incompatible result. Source maps and extra-origin fetching were not enabled.', 'analyze_web_bundle');
       }
     }
   } catch {
-    guard();
+    incomplete = true;
+    if (options.signal.aborted || !captured) guard();
     add('UNKNOWN', 'Inspection diagnostic', `The ${currentStep} step could not complete: check that the required tools are available, the REA browser provider supports CDP, and the live schemas match. ${CDP_SETUP} If the tab navigated, retry with its current exact URL. No findings are fabricated for failed steps.`, 'workflow diagnostic');
   }
-  guard();
+  if (options.signal.aborted || !captured) guard();
+  if (!options.allowed()) { incomplete = true; add('UNKNOWN', 'Connection', 'REA connection or analysis permission became unavailable; retained evidence predates this failure.', 'workflow diagnostic'); }
   if (!findings.some(f => f.area === 'Interaction behavior')) add('UNKNOWN', 'Interaction behavior', 'No clicks, typing, form submission, authentication or navigation were executed. Hidden states, validation and action outcomes require separate authorized observation.', 'workflow policy');
   add('UNKNOWN', 'Backend and data', 'Server implementation, authorization rules, database schema, complete API bodies and private functionality are unknown. Do not reconstruct hidden backend logic from this report.', 'workflow policy');
   if (!findings.some(f => f.area === 'Visual evidence')) add('UNKNOWN', 'Visual evidence', 'No screenshot, CSS measurements or responsive breakpoint testing was performed. DOM and accessibility presence do not establish exact visible geometry or styling.', 'workflow policy');
   add('UNKNOWN', 'Coverage', 'One existing tab, one page inspection and at most one static bundle analysis. No crawling. Findings are locally capped; absence from this report is not proof of absence.', 'workflow policy');
   options.progress(90, 'Building evidence-linked reconstruction specification…');
   const report: WebReport = {
-    target: safeText(url.href), createdAt: new Date().toISOString(), status: captured ? 'captured' : 'partial', findings, evidence,
+    target: safeText(url.href), createdAt: new Date().toISOString(), status: captured && !incomplete ? 'captured' : 'partial', findings, evidence,
     summary: `${evidence.length} REA Evidence records; ${findings.filter(f => f.classification === 'OBSERVED').length} observed findings; ${findings.filter(f => f.classification === 'INFERRED').length} candidates; ${findings.filter(f => f.classification === 'UNKNOWN').length} unknowns. Passive snapshot, not complete application coverage.`,
     screenshot: screenshotImage, specification: '', markdown: ''
   };
   report.specification = reconstructionSpec(report);
   report.markdown = exportWebReport(report);
-  options.progress(100, captured ? 'Inspection captured. Review coverage and unknowns before implementation.' : 'Analysis incomplete. Review setup diagnostics; no capture was fabricated.');
+  options.progress(100, captured && !incomplete ? 'Inspection captured. Review coverage and unknowns before implementation.' : 'Analysis incomplete. Review setup diagnostics; no capture was fabricated.');
   return report;
 }
 

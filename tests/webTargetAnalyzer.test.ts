@@ -12,6 +12,15 @@ function setup(response: (tool: WebTool) => unknown = webResponse) {
 }
 
 describe('Web target workflow', () => {
+  it.each([undefined, { total: 1, items: [{ length: 500_001 }] }])('skips unbounded source analysis and preserves page and screenshot evidence (%j)', async scripts => {
+    const { call, options } = setup(tool => tool === 'inspect_web_page' ? evidenceResult(tool, { ...page, scripts }) : webResponse(tool));
+    const report = await analyzeWebTarget(options);
+    expect(call.mock.calls.map(([tool]) => tool)).toEqual(['list_browser_targets', 'inspect_web_page', 'capture_web_screenshot']);
+    expect(report.status).toBe('partial');
+    expect(report.screenshot).toBeDefined();
+    expect(report.findings.some(f => f.area === 'JavaScript analysis budget')).toBe(true);
+    expect(report.evidence).toHaveLength(3);
+  });
   it('runs a bounded passive sequence and generates an evidence-linked coding brief', async () => {
     const { call, options, progress } = setup();
     const report = await analyzeWebTarget(options);
@@ -64,7 +73,7 @@ describe('Web target workflow', () => {
     options.tools = options.tools.filter(tool => tool !== 'analyze_web_bundle');
     const report = await analyzeWebTarget(options);
     expect(call).toHaveBeenCalledTimes(3);
-    expect(report.status).toBe('captured');
+    expect(report.status).toBe('partial');
     expect(report.findings.some(f => f.classification === 'UNKNOWN' && f.area === 'JavaScript analysis')).toBe(true);
   });
   it('reports visual evidence as unavailable when the live catalog lacks screenshot capture', async () => {

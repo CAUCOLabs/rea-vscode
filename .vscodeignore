@@ -1,0 +1,16 @@
+**/*
+!package.json
+!README.md
+!LICENSE
+!LICENSE-REA
+!THIRD_PARTY_NOTICES.txt
+!dist/extension.js
+!dist/browserServer.js
+!dist/routerServer.js
+!media/*.js
+!media/*.css
+!media/*.svg
+!docs/*.md
+
+!runtime/rea/**
+!runtime/node/**

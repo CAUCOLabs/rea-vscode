@@ -51,6 +51,18 @@ describe('ConnectionManager', () => {
     expect(manager.getState()).toBe('disconnected');
   });
 
+  it('does not announce connected when the transport closes during initialization', async () => {
+    const client = createClient();
+    vi.mocked(client.connect).mockImplementationOnce(async () => {
+      vi.mocked(client.isConnected).mockReturnValue(false);
+      client.onDidDisconnect?.();
+    });
+    const manager = new ConnectionManager(client);
+    await expect(manager.connect('node', [])).rejects.toThrow('transport closed');
+    expect(manager.isConnected()).toBe(false);
+    expect(manager.getState()).toBe('error');
+  });
+
   it('records connection failures', async () => {
     const client = createClient();
 

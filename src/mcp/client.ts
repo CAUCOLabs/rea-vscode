@@ -1,3 +1,4 @@
+import { operationTimeout, protocolErrorCategory, StderrDiagnostics, type OperationTimeouts } from './operationTimeouts';
 import { WEB_TOOLS, webArguments, acceptsWebArguments, type WebTool } from '../services/webToolPolicy';
 import { READ_ONLY_TOOL, validateReadOnlyArguments } from '../services/readOnlyExecution';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -7,8 +8,14 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 export class ReaMcpClient {
+  constructor(private readonly timeouts: () => Partial<OperationTimeouts> = () => ({})) {}
+
   private client: Client | undefined;
   private transport: StdioClientTransport | undefined;
+
+  private operationDiagnostic?: (name: string, outcome: string) => void;
+  private connecting = false;
+  onDiagnostic?: (message: string) => void;
 
   private executionSchema: unknown;
   private webSchemas = new Map<string, unknown>();
@@ -44,27 +51,51 @@ export class ReaMcpClient {
   }
 
   async connect(command: string, args: string[]): Promise<void> {
-    if (this.client) {
+    if (this.client || this.connecting) {
       throw new Error('REA is already connected.');
     }
 
+    this.connecting = true;
     const client = new Client({
       name: 'rea-vscode',
-      version: '0.1.0'
+      version: '0.4.0'
     });
 
     const transport = new StdioClientTransport({
       command,
       args,
-      stderr: 'pipe'
+      stderr: 'pipe',
+      // Screenshots can occupy 20M base64 characters, repeated in MCP envelopes.
+      // Keep a finite transport budget above the workflow's per-evidence limits.
+      maxBufferSize: 64 * 1024 * 1024
     });
 
+    let closed = false;
+    let intentional = false;
+    let lastOperation = 'none';
+    let lastOutcome = 'none';
+    let lastFinished: number | undefined;
+    const updateOperation = (name: string, outcome: string) => { lastOperation = name; lastOutcome = outcome; lastFinished = Date.now(); };
+    this.operationDiagnostic = updateOperation;
+    client.onerror = error => this.onDiagnostic?.(`MCP protocol/transport error; category=${protocolErrorCategory(error)}; rawMessage=omitted`);
+    const closeTransport = transport.close.bind(transport);
+    transport.close = async () => {
+      this.onDiagnostic?.(`MCP transport close invoked; lastOperation=${lastOperation}; lastOutcome=${lastOutcome}`);
+      await closeTransport();
+    };
+    // Drain stderr from launch onwards to prevent child-process backpressure.
+    // Do not retain or log raw engine output (it may contain target data).
+    const stderr = new StderrDiagnostics();
+    transport.stderr?.on('data', chunk => stderr.accept(chunk));
     client.onclose = () => {
+      closed = true;
+      this.onDiagnostic?.(`MCP transport closed; intentional=${intentional || (!this.connecting && this.client !== client)}; ${stderr.summary()}; lastOperation=${lastOperation}; lastOutcome=${lastOutcome}; sinceOperationMs=${lastFinished === undefined ? 'unknown' : Date.now() - lastFinished}`);
       if (this.client === client) {
         this.executionSchema = undefined;
         this.webSchemas.clear();
         this.client = undefined;
         this.transport = undefined;
+        this.operationDiagnostic = undefined;
         this.onDidDisconnect?.();
       }
     };
@@ -72,6 +103,8 @@ export class ReaMcpClient {
     try {
       await client.connect(transport);
 
+      if (closed) throw new Error('REA transport closed during initialization.');
+      this.onDiagnostic?.(`MCP initialized; pid=${transport.pid}`);
       this.client = client;
       this.transport = transport;
       await this.listTools();
@@ -79,8 +112,11 @@ export class ReaMcpClient {
         await this.listTools();
       });
     } catch (error) {
+      intentional = true;
       await client.close().catch(() => undefined);
       throw error;
+    } finally {
+      this.connecting = false;
     }
   }
 
@@ -126,11 +162,28 @@ export class ReaMcpClient {
     const args = webArguments(name, endpoint, origin, id);
     if (!acceptsWebArguments(name, this.webSchemas.get(name), args)) throw new Error('Web operation is unavailable or its live schema is unsupported.');
     if (!this.client || signal.aborted) throw new Error('Web inspection is not connected or was cancelled.');
-    return this.client.callTool({ name, arguments: args }, undefined, { timeout: 20_000, maxTotalTimeout: 25_000, signal });
+    const started = Date.now();
+    const timeout = operationTimeout(name, this.timeouts());
+    const updateOperation = this.operationDiagnostic;
+    updateOperation?.(name, 'running');
+    this.onDiagnostic?.(`Web operation started: ${name}; timeoutMs=${timeout}`);
+    try {
+      const result = await this.client.callTool({ name, arguments: args }, undefined, { timeout, maxTotalTimeout: timeout, resetTimeoutOnProgress: false, signal });
+      updateOperation?.(name, result.isError === true ? 'tool-error' : 'success');
+      this.onDiagnostic?.(`Web operation completed: ${name}; toolError=${result.isError === true}; elapsedMs=${Date.now() - started}`);
+      return result;
+    } catch (error) {
+      const outcome = signal.aborted ? 'cancelled' : error instanceof Error && 'code' in error && error.code === -32001 ? 'timeout' : 'request-error';
+      updateOperation?.(name, outcome);
+      this.onDiagnostic?.(`Web operation failed: ${name}; cancelled=${signal.aborted}; connected=${this.isConnected()}; elapsedMs=${Date.now() - started}; outcome=${outcome}; cancellationNotification=${outcome === 'timeout' || outcome === 'cancelled'}`);
+      throw error;
+    }
   }
 
   async disconnect(): Promise<void> {
+    if (this.connecting) throw new Error('Cannot disconnect while REA is connecting.');
     const client = this.client;
+    this.onDiagnostic?.('MCP disconnect requested explicitly.');
 
     this.executionSchema = undefined;
     this.webSchemas.clear();

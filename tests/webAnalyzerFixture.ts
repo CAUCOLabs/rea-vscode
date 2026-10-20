@@ -37,7 +37,7 @@ export const page = {
   ] },
   metadata: { dom_urls: [{ node_index: 1, attribute: 'href', url: `${webTarget}settings?session=private-value`, destination_scope: 'approved' }] },
   resources: [{ type: 'Script', mime_type: 'text/javascript', url: `${webTarget}app.js?key=private-value` }],
-  scripts: { total: 1 }, network: { requests: [{ method: 'GET', url: `${webTarget}api/items?session=private-value`, status: 200, mime_type: 'application/json', body: 'DO NOT EXPORT BODY' }], prior_activity_available: false },
+  scripts: { total: 1, items: [{ length: 100 }] }, network: { requests: [{ method: 'GET', url: `${webTarget}api/items?session=private-value`, status: 200, mime_type: 'application/json', body: 'DO NOT EXPORT BODY' }], prior_activity_available: false },
   storage: { password: 'DO NOT EXPORT STORAGE' }, limitations: ['Attach window only']
 };
 export const bundle = {

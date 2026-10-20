@@ -36,12 +36,15 @@ export function presentAnalysis(report: WebReport): AnalysisPresentation {
   const unique = (values: string[]) => [...new Set(values)].slice(0, 30);
   const captured = report.status === 'captured';
   const canPrepare = captured && components.length > 0;
-  const missing = captured ? [
+  const hasPage = captured || report.evidence.some(e => e.tool === 'inspect_web_page');
+  const missing = hasPage ? [
     'Navigation declarations are observed, but clicks, forms and component behavior have not been tested; this workflow has no authorized interaction tool.',
     'Backend logic, private features and complete data requirements are unknown.',
     report.screenshot ? 'A verified screenshot of one viewport is available in Analysis details; geometry, computed styles and additional viewport sizes remain unknown.' : 'No verified screenshot is available. See Analysis details for the capture diagnostic; visual layout remains unknown.',
     'This is a limited snapshot; network activity and some resources may be missing.'
   ] : ['The website was not inspected. Retry; if this continues, check setup in Advanced. No reconstruction claims can be made.'];
+  if (!captured && hasPage) missing.push('Partial analysis retained: some operations failed. Review Analysis details before using the evidence.');
+  if (report.findings.some(f => f.area === 'Connection')) missing.push('The analysis connection was lost. Reconnect before collecting further evidence.');
   if (report.findings.some(f => f.area === 'Redirect')) missing.push('The website redirected. Only the final page was inspected.');
   if (report.findings.some(f => f.classification === 'UNKNOWN' && f.area === 'JavaScript analysis')) missing.push('Some scripts could not be analyzed.');
   return {

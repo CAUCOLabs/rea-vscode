@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { webResponse, webSchemas, webTarget } from './webAnalyzerFixture';
 import { readOnlySchema } from './readOnlyFixture';
 import { parseSidebarMessage, redact, resultText } from '../src/views/sidebarProtocol';
+import { bundledNodePath } from '../src/services/engineRuntime';
 
 const mocks = vi.hoisted(() => ({
   trusted: true,
+  loseConnection: undefined as (() => void) | undefined,
   commands: new Map<string, (...args: unknown[]) => unknown>(),
   launch: vi.fn(),
   callTool: vi.fn(),
@@ -33,7 +35,7 @@ vi.mock('vscode', () => ({
     onDidChangeConfiguration: vi.fn(() => ({ dispose() {} })),
     get isTrusted() { return mocks.trusted; },
     onDidGrantWorkspaceTrust: vi.fn(() => ({ dispose() {} })),
-    getConfiguration: () => ({ get: (key: string) => key === 'scriptPath' ? '/fixture/rea.mjs' : 'node' })
+    getConfiguration: () => ({ get: (key: string, fallback: string) => key === 'scriptPath' ? '' : fallback || 'node' })
   },
   ProgressLocation: { Notification: 15 },
   Uri: { joinPath: (_base: unknown, ...parts: string[]) => parts.join('/') },
@@ -55,6 +57,7 @@ vi.mock('vscode', () => ({
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   Client: class {
     onclose?: () => void;
+    constructor() { mocks.loseConnection = () => this.onclose?.(); }
     connect = mocks.launch;
     setNotificationHandler = vi.fn();
     callTool = mocks.callTool;
@@ -67,7 +70,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   }
 }));
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-  StdioClientTransport: class { constructor(options: unknown) { mocks.transport(options); } }
+  StdioClientTransport: class { close = vi.fn(async () => {}); constructor(options: unknown) { mocks.transport(options); } }
 }));
 
 beforeEach(() => {
@@ -86,7 +89,7 @@ beforeEach(() => {
 
 async function activate() {
   const extension = await import('../src/extension');
-  extension.activate({ extensionUri: 'fixture', subscriptions: [] } as any);
+  extension.activate({ extensionUri: { fsPath: process.cwd() }, subscriptions: [] } as any);
   return extension;
 }
 
@@ -125,7 +128,7 @@ describe('Workspace Trust and MCP boundary', () => {
   it('reaches the existing MCP connection in a trusted workspace', async () => {
     await activate();
     await mocks.commands.get('rea.connect')!();
-    expect(mocks.transport).toHaveBeenCalledWith({ command: 'node', args: ['/fixture/rea.mjs', 'mcp'], stderr: 'pipe' });
+    expect(mocks.transport).toHaveBeenCalledWith({ command: bundledNodePath(process.cwd()), args: [`${process.cwd()}/runtime/rea/scripts/rea.mjs`, 'mcp'], stderr: 'pipe', maxBufferSize: 64 * 1024 * 1024 });
     expect(mocks.launch).toHaveBeenCalledOnce();
   });
   it('rejects all other tool names at the client boundary', async () => {
@@ -210,6 +213,43 @@ describe('Webview protocol and output', () => {
 
 
 describe('Web analyzer host workflow and export', () => {
+  it.each(['success', 'tool error', 'timeout', 'cleanup error'])('preserves the session after analysis and browser cleanup: %s', async kind => {
+    await activate();
+    const { receive, postMessage } = await view();
+    mocks.callTool.mockImplementation(async ({ name }: { name: keyof typeof webSchemas }) => {
+      if (name === 'capture_web_screenshot' && kind === 'timeout') throw new Error('MCP error -32001: Request timed out');
+      if (name === 'capture_web_screenshot' && kind === 'tool error') return { isError: true, content: [] };
+      return webResponse(name);
+    });
+    if (kind === 'cleanup error') mocks.closeBrowser.mockRejectedValueOnce(new Error('cleanup failed'));
+    receive({ type: 'connect' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'connected', busy: false })));
+    postMessage.mockClear();
+    receive({ type: 'analyzeWebTarget', url: webTarget });
+    await vi.waitFor(() => expect(mocks.closeBrowser).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'connected', busy: false })));
+    expect(postMessage.mock.calls.filter(([message]) => message.type === 'status').every(([message]) => message.state === 'connected')).toBe(true);
+    mocks.callTool.mockResolvedValueOnce({ content: [{ type: 'text', text: 'still connected' }] });
+    receive({ type: 'execute', arguments: {} });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'result', text: expect.stringContaining('still connected') })));
+    expect(mocks.launch).toHaveBeenCalledOnce();
+  });
+
+  it('publishes retained partial evidence and disconnected state after bundle server failure', async () => {
+    await activate();
+    const { receive, postMessage } = await view();
+    mocks.callTool.mockImplementation(async ({ name }: { name: keyof typeof webSchemas }) => {
+      if (name === 'analyze_web_bundle') { mocks.loseConnection?.(); throw new Error('Connection closed'); }
+      return webResponse(name);
+    });
+    receive({ type: 'connect' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'connected', busy: false })));
+    receive({ type: 'analyzeWebTarget', url: webTarget });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'analysisReport', report: expect.objectContaining({ status: 'partial', screenshot: expect.any(Object), evidence: expect.arrayContaining([expect.objectContaining({ tool: 'inspect_web_page' })]) }) })));
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'disconnected' }));
+    expect(mocks.closeBrowser).toHaveBeenCalledOnce();
+  });
+
   it('inspects using the closed policy and exports only the host-generated report', async () => {
     await activate();
     const { receive, postMessage, webview } = await view();
@@ -238,7 +278,7 @@ describe('Web analyzer host workflow and export', () => {
     expect(mocks.callTool).toHaveBeenCalledTimes(4);
     const inspection = mocks.callTool.mock.calls[1];
     expect(inspection[0].arguments).toMatchObject({ observation_ms: 500, include_accessibility_text: true, include_console_text: false, include_json_body_shapes: false, include_script_sources: false });
-    expect(inspection[2]).toMatchObject({ timeout: 20_000, maxTotalTimeout: 25_000 });
+    expect(inspection[2]).toMatchObject({ timeout: 60_000, maxTotalTimeout: 60_000 });
     receive({ type: 'exportWebReport', path: '/tmp/unauthorized', report: 'injected' });
     expect(mocks.saveDialog).not.toHaveBeenCalled();
     receive({ type: 'exportWebReport' });

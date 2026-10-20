@@ -32,3 +32,11 @@ coverage/
 *.swp
 
 .vscode/settings.json
+
+# Bundled runtimes and installed REA dependencies
+# Generated locally by the distribution scripts
+/runtime/node/
+/runtime/rea/
+
+# Generated build artifacts
+/build/

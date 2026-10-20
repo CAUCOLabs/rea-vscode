@@ -1,0 +1,53 @@
+name: Platform VSIX builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-14
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: win32-x64
+            runner: windows-2025
+          - target: linux-x64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.8.1
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: npm ci
+      - name: Prepare target Node and REA production runtime
+        run: npm run runtime:prepare -- --target ${{ matrix.target }}
+        env:
+          NODE_RUNTIME_VERSION: 26.8.1
+      - run: npm run check
+      - run: npm test -- --reporter=dot
+      - run: npm run build
+      - name: Package platform VSIX
+        run: npm run package -- --target ${{ matrix.target }} --out rea-vscode-0.4.0-${{ matrix.target }}.vsix
+      - name: Verify VSIX contents
+        run: python scripts/verify_vsix.py rea-vscode-0.4.0-${{ matrix.target }}.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rea-vscode-0.4.0-${{ matrix.target }}
+          path: rea-vscode-0.4.0-${{ matrix.target }}.vsix
+          if-no-files-found: error
+          retention-days: 30

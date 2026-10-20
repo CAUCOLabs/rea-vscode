@@ -46,6 +46,7 @@ export class ConnectionManager {
 
     try {
       await this.client.connect(command, args);
+      if (!this.client.isConnected()) throw new Error('REA transport closed during connection.');
       this.setState('connected');
     } catch (error) {
       this.setState('error');

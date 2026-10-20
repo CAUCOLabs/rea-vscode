@@ -29,12 +29,13 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
   ) {
     this.subscriptions.push(manager.onDidChange(() => {
       if (manager.getState() !== 'connected') {
-        if (this.analysisController) {
+        const retainPartial = manager.getState() === 'disconnected' && this.analysisController && !this.analysisController.signal.aborted;
+        if (this.analysisController && !retainPartial) {
           this.analysisController.abort();
           void this.browser?.close().catch(() => undefined);
           this.send({ type: 'analysisProgress', percent: 0, message: 'The connection changed. Reconnect and try analyzing again.' });
         }
-        this.generation++;
+        if (!retainPartial) this.generation++;
         this.tools = [];
         this.send({ type: 'tools', tools: [] });
         this.send({ type: 'result', text: '' });
@@ -61,7 +62,7 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none';">
 <link rel="stylesheet" href="${style}"><title>REA</title></head><body>
 <header class="brand"><span class="brand-mark" aria-hidden="true">R</span><div><h1>REA</h1><p>Understand a website.<br>Plan your own implementation.</p></div></header>
-<div class="connection-row"><span id="connection-indicator" role="status">Starting REA…</span><button id="reconnect" class="text-button" hidden>Reconnect</button></div>
+<button id="open-setup">Set up REA</button><div class="connection-row"><span id="connection-indicator" role="status">Starting REA…</span><button id="reconnect" class="text-button" hidden>Reconnect</button></div>
 <section id="web-analyzer" aria-label="Analyze an application">
 <fieldset class="target-picker"><legend>What would you like to explore?</legend><div class="target-options">
 <button id="target-web" class="target-option" aria-pressed="true">Web</button><button id="target-github" class="target-option" aria-pressed="false">GitHub<span>Coming soon</span></button><button id="target-desktop" class="target-option" aria-pressed="false">Desktop App<span>Coming soon</span></button>
@@ -79,7 +80,7 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
 <button id="create-reconstruction" hidden disabled>Create Reconstruction Project</button><p id="preparation-status" role="status"></p><section id="analysis-detail-panel" hidden aria-label="Analysis details"><h3>Analysis details</h3><div id="screenshot-preview"></div><div id="human-findings"></div></section>
 </section></section>
 <details id="advanced-explorer"><summary>Advanced / Developer Tools</summary>
-<p id="status" role="status">Disconnected</p><div class="actions"><button id="connect">Connect</button><button id="disconnect" disabled>Disconnect</button><button id="refresh" disabled>Refresh tools</button><button id="open-setup">Open REA Settings</button></div><p id="notice" role="status"></p>
+<p id="status" role="status">Disconnected</p><div class="actions"><button id="connect">Connect</button><button id="disconnect" disabled>Disconnect</button><button id="refresh" disabled>Refresh tools</button></div><p id="notice" role="status"></p>
 <details><summary>Browser connection details</summary><p>REA creates a dedicated temporary browser for each analysis. Personal profiles and arbitrary endpoints are never attached.</p><label for="cdp-endpoint">Managed connection</label><input id="cdp-endpoint" readonly value="Not running"></details>
 <details><summary>Evidence and diagnostics</summary><p id="evidence-summary">No analysis yet.</p><div id="analysis-findings"></div></details>
 <details><summary>Coding brief preview</summary><pre id="reconstruction-spec">Prepare a reconstruction brief after analyzing.</pre></details><details><summary>Tool Explorer</summary><section class="navigation" aria-label="Tool navigation"><label for="search">Search tools</label><input id="search" type="search" placeholder="Name or description">
@@ -156,13 +157,12 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
           this.send({ type: 'analysisReset' });
           const controller = new AbortController();
           this.analysisController = controller;
-          const timer = setTimeout(() => controller.abort(), 105_000);
           try {
             if (!this.tools.length) await this.refresh();
             if (!this.tools.some(tool => tool.name === 'inspect_web_page') || !this.tools.some(tool => tool.name === 'list_browser_targets')) throw new AnalysisBrowserError('Your REA installation needs web analysis support. Open REA Settings in Advanced to check the installation.');
             const allowed = () => vscode.workspace.isTrusted && this.manager.isConnected() && this.generation === operationGeneration;
             this.send({ type: 'analysisProgress', percent: 5, message: 'Preparing a separate analysis browser…' });
-            const browser = await startAnalysisBrowser({ url: message.url, signal: controller.signal, allowed });
+            const browser = await startAnalysisBrowser({ url: message.url, signal: controller.signal, allowed, executablePath: vscode.workspace.getConfiguration('rea').get<string>('browserPath', '') });
             this.browser = browser;
             this.send({ type: 'browserDetails', endpoint: browser.endpoint });
             const report = await analyzeWebTarget({
@@ -181,20 +181,20 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
               this.send({ type: 'analysisReport', report, presentation: presentAnalysis(report) });
             }
           } catch (error) {
+            this.client.onDiagnostic?.(`Analysis failed; connected=${this.manager.isConnected()}; cancelled=${controller.signal.aborted}; ${error instanceof Error ? error.message : 'unknown error'}`);
             this.send({ type: 'analysisProgress', percent: 0, message: error instanceof AnalysisBrowserError ? error.message : 'We could not finish this analysis. Check the website address and try again. Setup details are available in Advanced.' });
           } finally {
-            clearTimeout(timer);
             this.analysisController = undefined;
             const browser = this.browser;
             this.browser = undefined;
             if (browser) {
-              try { await browser.close(); this.send({ type: 'browserDetails', endpoint: 'Analysis browser closed' }); }
+              try { await browser.close(); this.client.onDiagnostic?.(`Analysis browser closed; MCP connected=${this.manager.isConnected()}`); this.send({ type: 'browserDetails', endpoint: 'Analysis browser closed' }); }
               catch (error) { this.send({ type: 'analysisProgress', percent: 0, message: error instanceof AnalysisBrowserError ? error.message : 'The analysis browser could not close. Close it before starting another analysis.' }); }
             }
           }
           break;
         }
-        case 'openSetup': await vscode.commands.executeCommand('workbench.action.openSettings', 'rea.'); break;
+        case 'openSetup': await vscode.commands.executeCommand('rea.setup'); break;
         case 'prepareReconstruction': {
           if (!this.analysisReport || !vscode.workspace.isTrusted || !presentAnalysis(this.analysisReport).canPrepare) break;
           this.analysisReport.specification = reconstructionSpec(this.analysisReport);

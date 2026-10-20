@@ -3,14 +3,15 @@ import * as esbuild from 'esbuild';
 const watch = process.argv.includes('--watch');
 
 const options = {
-  entryPoints: ['src/extension.ts'],
+  entryPoints: { extension: 'src/extension.ts', browserServer: 'src/mcp/browserMain.ts', routerServer: 'src/mcp/routerMain.ts' },
   bundle: true,
   platform: 'node',
   format: 'cjs',
   target: 'node20',
-  outfile: 'dist/extension.js',
+  outdir: 'dist',
   external: ['vscode'],
-  sourcemap: true,
+  sourcemap: watch,
+  metafile: true,
   logLevel: 'info'
 };
 
@@ -19,6 +20,8 @@ if (watch) {
   await context.watch();
   console.log('REA extension build watcher started.');
 } else {
-  await esbuild.build(options);
+  const result = await esbuild.build(options);
+  const { generateNotices } = await import('./scripts/notices.mjs');
+  await generateNotices(result.metafile);
   console.log('REA extension build completed.');
 }
