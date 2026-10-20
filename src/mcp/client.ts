@@ -180,6 +180,59 @@ export class ReaMcpClient {
     }
   }
 
+  async captureInitialWebScenario(
+    url: string,
+    executablePath: string,
+    signal: AbortSignal
+  ) {
+    if (!this.client || signal.aborted) {
+      throw new Error('REA is disconnected or the operation was cancelled.');
+    }
+
+    const target = new URL(url);
+    if (!['http:', 'https:'].includes(target.protocol) ||
+        target.username || target.password) {
+      throw new Error('A valid HTTP(S) URL is required.');
+    }
+
+    const result = await this.client.callTool({
+      name: 'capture_browser_scenario',
+      arguments: {
+        browser: {
+          mode: 'launch',
+          executable_path: executablePath,
+          headless: true
+        },
+        start_url: {
+          url: target.href
+        },
+        actions: [
+          {
+            step_id: 'initial_observation',
+            action: 'wait_for_timeout',
+            duration_ms: 500
+          }
+        ],
+        capture: {
+          after_each_step: [],
+          at_end: ['screenshot', 'dom', 'accessibility', 'url'],
+          events: []
+        }
+      }
+    }, undefined, {
+      timeout: 60000,
+      maxTotalTimeout: 60000,
+      resetTimeoutOnProgress: false,
+      signal
+    });
+
+    if (result.isError) {
+      throw new Error('REA could not capture the browser scenario.');
+    }
+
+    return result;
+  }
+
   async disconnect(): Promise<void> {
     if (this.connecting) throw new Error('Cannot disconnect while REA is connecting.');
     const client = this.client;

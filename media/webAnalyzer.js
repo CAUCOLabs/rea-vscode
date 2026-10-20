@@ -2,15 +2,18 @@
   const api = globalThis.reaSidebarApi;
   const byId = id => document.getElementById(id);
   let trusted = false, connected = false, busy = false, reportAvailable = false;
-  let prepared = false;
+  let prepared = false, projectCreated = false;
   let canPrepare = false, type = 'web', presentation, hasAnalysisFeedback = false;
   const targetButtons = { web: 'target-web', github: 'target-github', desktop: 'target-desktop' };
   function buttons() {
     byId('analyze-target').disabled = !trusted || !connected || busy || type !== 'web';
     byId('export-report').disabled = !trusted || !reportAvailable || busy;
+    byId('explore-interactions').disabled = !trusted || !connected || !canPrepare || busy;
     byId('prepare-reconstruction').disabled = !trusted || !canPrepare || busy;
     byId('create-reconstruction').hidden = !prepared;
     byId('create-reconstruction').disabled = !trusted || !canPrepare || !prepared || busy;
+    byId('generate-with-ai').hidden = !projectCreated;
+    byId('generate-with-ai').disabled = !trusted || !projectCreated || busy;
     byId('target-url').disabled = busy || type !== 'web';
     byId('reconnect').disabled = busy || !trusted;
     for (const id of Object.values(targetButtons)) byId(id).disabled = busy;
@@ -25,7 +28,8 @@
     if (items.length > limit) byId(id).append(node('li', `+ ${items.length - limit} more in View Analysis`));
   }
   function reset() {
-    prepared = false; byId('screenshot-preview').replaceChildren();
+    prepared = false; projectCreated = false; byId('screenshot-preview').replaceChildren();
+    byId('scenario-evidence').replaceChildren(); byId('scenario-evidence').hidden = true;
     reportAvailable = false; canPrepare = false; presentation = undefined; hasAnalysisFeedback = false;
     byId('evidence-summary').textContent = 'No analysis yet.';
     byId('analysis-findings').replaceChildren();
@@ -62,8 +66,14 @@
   });
   byId('target-url').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); byId('analyze-target').click(); } });
   byId('export-report').addEventListener('click', () => { if (trusted && reportAvailable && !busy) api.postMessage({ type: 'exportWebReport' }); });
+  byId('explore-interactions').addEventListener('click', () => {
+    if (trusted && connected && canPrepare && !busy) {
+      api.postMessage({ type: 'exploreWebInteractions' });
+    }
+  });
   byId('prepare-reconstruction').addEventListener('click', () => { if (trusted && canPrepare && !busy) api.postMessage({ type: 'prepareReconstruction' }); });
   byId('create-reconstruction').addEventListener('click', () => { if (trusted && canPrepare && prepared && !busy) api.postMessage({ type: 'createReconstructionProject' }); });
+  byId('generate-with-ai').addEventListener('click', () => { if (trusted && projectCreated && !busy) api.postMessage({ type: 'generateWithAI' }); });
   byId('view-analysis').addEventListener('click', () => {
     const open = byId('analysis-detail-panel').hidden;
     byId('analysis-detail-panel').hidden = !open;
@@ -104,8 +114,37 @@
         byId('analysis-meter').value = message.percent;
         byId('analysis-meter').hidden = !busy || message.percent === 0;
         break;
+      case 'scenarioEvidence': {
+        const evidence = message.evidence;
+        if (!evidence || !reportAvailable || evidence.target !== byId('report-target').textContent) break;
+        const container = byId('scenario-evidence');
+        container.replaceChildren(); container.hidden = false;
+        container.append(node('h3', 'REA browser scenario — initial observation'));
+        container.append(node('p', 'Captured state only. No clicks, forms or navigation have been tested.'));
+        container.append(node('p', `Completeness: ${evidence.completeness || 'unknown'}`));
+        if (evidence.screenshot && evidence.screenshot.length <= 20000000 && /^[A-Za-z0-9+/]+={0,2}$/.test(evidence.screenshot)) {
+          const img = node('img', '');
+          img.setAttribute('src', `data:image/png;base64,${evidence.screenshot}`);
+          img.setAttribute('alt', 'REA initial browser scenario screenshot');
+          container.append(img);
+        }
+        for (const [label, content, hash] of [
+          ['DOM', evidence.dom, evidence.domHash],
+          ['Accessibility', evidence.accessibility, evidence.accessibilityHash]
+        ]) {
+          const section = document.createElement('details');
+          section.append(node('summary', `${label}: ${content ? 'captured' : 'unavailable'}`));
+          if (hash) section.append(node('p', `SHA-256: ${hash}`));
+          if (content) section.append(node('pre', content));
+          container.append(section);
+        }
+        byId('analysis-detail-panel').hidden = false;
+        byId('view-analysis').setAttribute('aria-expanded', 'true');
+        break;
+      }
       case 'browserDetails': byId('cdp-endpoint').value = message.endpoint; break;
-      case 'projectCreated': byId('preparation-status').textContent = message.message; break;
+      case 'projectCreated': projectCreated = typeof message.path === 'string' && !!message.path; byId('preparation-status').textContent = message.message; buttons(); break;
+      case 'generationPrepared': byId('preparation-status').textContent = message.message; break;
       case 'reconstructionPrepared':
         prepared = true; buttons();
         byId('reconstruction-spec').textContent = message.specification;
@@ -122,7 +161,7 @@
         byId('evidence-summary').textContent = `${report.target} — ${report.status}. ${report.summary}`;
         byId('reconstruction-spec').textContent = report.specification;
         renderHumanReport(presentation);
-        prepared = false;
+        prepared = false; projectCreated = false;
         const preview = byId('screenshot-preview'); preview.replaceChildren();
         const image = report.screenshot;
         if (image && typeof image.dataBase64 === 'string' && image.dataBase64.length <= 20000000 && /^[A-Za-z0-9+/]+={0,2}$/.test(image.dataBase64)) {

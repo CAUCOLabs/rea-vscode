@@ -1,5 +1,5 @@
 export { READ_ONLY_TOOL } from '../services/readOnlyExecution';
-export type SidebarAction = 'ready' | 'connect' | 'disconnect' | 'refresh' | 'exportWebReport' | 'prepareReconstruction' | 'createReconstructionProject' | 'openSetup';
+export type SidebarAction = 'ready' | 'connect' | 'disconnect' | 'refresh' | 'exportWebReport' | 'prepareReconstruction' | 'createReconstructionProject' | 'exploreWebInteractions' | 'openSetup';
 export type SidebarMessage = { type: SidebarAction } | { type: 'execute'; arguments: Record<string, string | number> } | { type: 'analyzeWebTarget'; url: string };
 
 export function parseSidebarMessage(value: unknown): SidebarMessage | undefined {
@@ -16,7 +16,7 @@ export function parseSidebarMessage(value: unknown): SidebarMessage | undefined 
     return { type: 'execute', arguments: Object.fromEntries(entries) };
   }
   if (Object.keys(record).length !== 1 || typeof record.type !== 'string') return;
-  if (['ready', 'connect', 'disconnect', 'refresh', 'exportWebReport', 'prepareReconstruction', 'createReconstructionProject', 'openSetup'].includes(record.type)) {
+  if (['ready', 'connect', 'disconnect', 'refresh', 'exportWebReport', 'prepareReconstruction', 'createReconstructionProject', 'exploreWebInteractions', 'openSetup'].includes(record.type)) {
     return { type: record.type as SidebarAction };
   }
 }
