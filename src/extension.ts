@@ -23,8 +23,10 @@ export function activate(context: vscode.ExtensionContext) {
     if (connectionManager.isConnected()) await connectionManager.disconnect();
     await vscode.commands.executeCommand('rea.connect', true);
     if (!connectionManager.isConnected()) return false;
-    await rea.listTools();
-    return true;
+    const tools = await rea.listTools();
+    const invocation = await rea.executeReadOnlyTool('list_unknowns', { offset: 0, limit: 1 });
+    if (invocation.isError) throw new Error('REA installation verification tool call failed.');
+    return { toolsDiscovered: tools.length, tool: 'list_unknowns', invocation };
   });
   output = vscode.window.createOutputChannel('REA');
 
@@ -134,6 +136,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
           `REA: ${tools.length} MCP tools discovered.`
         );
+        return tools;
       } catch {
         vscode.window.showErrorMessage(
           'REA tool discovery failed. Check the connection and retry.'

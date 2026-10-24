@@ -219,7 +219,7 @@ export function reconstructionSpec(report: WebReport): string {
     ...navigation.map(f => `- Implement the declared navigation affordance from ${f.id}: ${md(f.detail)}. Destination reachability and activation behavior still require verification.`),
     '- PROPOSED: Give each observed control an explicit keyboard-accessible interaction contract and test. Do not invent business behavior for controls whose activation was not observed.',
     '## Visual requirements',
-    ...refs(['Visual evidence']).map(f => `- UNKNOWN (${f.id}): ${md(f.detail)}`),
+    ...report.findings.filter(f => f.area === 'Visual evidence').map(f => `- ${f.classification} (${f.id}): ${md(f.detail)}`),
     '- PROPOSED: Define original visual styling and responsive layouts, then validate them at agreed viewport sizes. Only the captured visible viewport is available; element geometry, computed styles and additional viewport evidence are not.',
     '## Resource requirements',
     ...(refs(['Resources']).length ? refs(['Resources']).map(f => `- OBSERVED (${f.id}): ${md(f.detail)}`) : ['- UNKNOWN: No page resource evidence was retained.']),

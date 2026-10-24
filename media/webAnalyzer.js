@@ -4,9 +4,12 @@
   let trusted = false, connected = false, busy = false, reportAvailable = false;
   let prepared = false, projectCreated = false;
   let canPrepare = false, type = 'web', presentation, hasAnalysisFeedback = false;
+  let repositoryAvailable = false;
+  let desktopAvailable = false, desktopSupported = false, desktopApplications = [];
+  const urls = { web: '', github: '', desktop: '' };
   const targetButtons = { web: 'target-web', github: 'target-github', desktop: 'target-desktop' };
   function buttons() {
-    byId('analyze-target').disabled = !trusted || !connected || busy || type !== 'web';
+    byId('analyze-target').disabled = !trusted || !connected || busy || (type === 'desktop' && (!desktopSupported || !desktopApplications.find(a => a.id === byId('desktop-application').value)?.identityAvailable || !byId('desktop-window').value));
     byId('export-report').disabled = !trusted || !reportAvailable || busy;
     byId('explore-interactions').disabled = !trusted || !connected || !canPrepare || busy;
     byId('prepare-reconstruction').disabled = !trusted || !canPrepare || busy;
@@ -14,11 +17,25 @@
     byId('create-reconstruction').disabled = !trusted || !canPrepare || !prepared || busy;
     byId('generate-with-ai').hidden = !projectCreated;
     byId('generate-with-ai').disabled = !trusted || !projectCreated || busy;
-    byId('target-url').disabled = busy || type !== 'web';
+    byId('target-url').disabled = busy || type === 'desktop';
+    byId('target-url').hidden = type === 'desktop';
+    byId('target-url-label').hidden = type === 'desktop';
+    byId('desktop-picker').hidden = type !== 'desktop';
+    byId('coming-soon').hidden = type !== 'desktop' || desktopSupported;
+    byId('discover-desktop').disabled = !trusted || busy || !desktopSupported;
+    byId('desktop-application').disabled = busy || !trusted || !desktopApplications.length;
+    byId('desktop-window').disabled = busy || !trusted || !byId('desktop-application').value;
+    byId('desktop-screenshot').disabled = busy || !trusted || !desktopSupported;
+    byId('desktop-results').hidden = !desktopAvailable || type !== 'desktop';
+    byId('export-desktop').disabled = !trusted || !desktopAvailable || busy;
+    byId('handoff-desktop').disabled = !trusted || !desktopAvailable || busy;
     byId('reconnect').disabled = busy || !trusted;
     for (const id of Object.values(targetButtons)) byId(id).disabled = busy;
     byId('web-analyzer').setAttribute('aria-busy', String(busy));
     byId('analysis-results').hidden = !reportAvailable || type !== 'web';
+    byId('repository-results').hidden = !repositoryAvailable || type !== 'github';
+    byId('export-repository').disabled = !trusted || !repositoryAvailable || busy;
+    byId('handoff-repository').disabled = !trusted || !repositoryAvailable || busy;
   }
   const node = (tag, text) => { const item = document.createElement(tag); item.textContent = text; return item; };
   function list(id, items, empty, limit = 3) {
@@ -44,18 +61,61 @@
   for (const [target, id] of Object.entries(targetButtons)) {
     byId(id).addEventListener('click', () => {
       if (busy) return;
+      urls[type] = byId('target-url').value;
       type = target;
+      byId('target-url').value = urls[type];
+      byId('target-url-label').textContent = type === 'github' ? 'GitHub repository URL' : 'Website URL';
+      byId('target-url').setAttribute('placeholder', type === 'github' ? 'https://github.com/owner/repository' : 'https://example.com');
       for (const [value, button] of Object.entries(targetButtons)) byId(button).setAttribute('aria-pressed', String(value === type));
-      byId('coming-soon').hidden = type === 'web';
-      byId('coming-soon').textContent = type === 'web' ? '' : `${type === 'github' ? 'GitHub' : 'Desktop App'} analysis is coming soon. Choose Web to analyze a website.`;
+      byId('coming-soon').hidden = type !== 'desktop' || desktopSupported;
+      byId('coming-soon').textContent = type === 'desktop' && !desktopSupported ? 'Desktop inspection requires a local macOS extension host.' : '';
+      byId('analysis-progress').textContent = type === 'desktop' ? 'Discover running applications, select a window, then choose Analyze. No interactions will be performed.' : type === 'github' ? 'Paste a public GitHub repository URL to collect a static snapshot.' : 'Paste a website address to get started.';
       buttons();
     });
   }
+  function desktopWindows() {
+    const select = byId('desktop-window'); select.replaceChildren();
+    const placeholder = node('option', 'Select a window'); placeholder.value = ''; select.append(placeholder); select.value = '';
+    const app = desktopApplications.find(a => a.id === byId('desktop-application').value);
+    for (const window of app?.windows ?? []) { const option = node('option', `${window.title || 'Untitled window'} · ${window.id}`); option.value = String(window.id); select.append(option); }
+    buttons();
+  }
+  byId('desktop-application').addEventListener('change', desktopWindows);
+  byId('desktop-window').addEventListener('change', buttons);
+  byId('discover-desktop').addEventListener('click', () => { if (trusted && desktopSupported && !busy) api.postMessage({ type: 'discoverDesktop' }); });
+  byId('view-desktop').addEventListener('click', () => {
+    byId('desktop-details').hidden = !byId('desktop-details').hidden;
+    byId('view-desktop').setAttribute('aria-expanded', String(!byId('desktop-details').hidden));
+  });
+  byId('export-desktop').addEventListener('click', () => { if (trusted && desktopAvailable && !busy) api.postMessage({ type: 'exportDesktopReport' }); });
+  byId('handoff-desktop').addEventListener('click', () => { if (trusted && desktopAvailable && !busy) api.postMessage({ type: 'handoffDesktop' }); });
+  byId('view-repository').addEventListener('click', () => {
+    byId('repository-details').hidden = !byId('repository-details').hidden;
+    byId('view-repository').setAttribute('aria-expanded', String(!byId('repository-details').hidden));
+  });
+  byId('export-repository').addEventListener('click', () => { if (trusted && repositoryAvailable && !busy) api.postMessage({ type: 'exportRepositoryReport' }); });
+  byId('handoff-repository').addEventListener('click', () => { if (trusted && repositoryAvailable && !busy) api.postMessage({ type: 'handoffRepository' }); });
   byId('reconnect').addEventListener('click', () => { if (trusted && !busy) api.postMessage({ type: 'connect' }); });
   byId('open-setup').addEventListener('click', () => api.postMessage({ type: 'openSetup' }));
   byId('analyze-target').addEventListener('click', () => {
-    if (!trusted || !connected || busy || type !== 'web') return;
+    if (!trusted || !connected || busy) return;
+    if (type === 'desktop') {
+      const app = desktopApplications.find(a => a.id === byId('desktop-application').value);
+      const windowId = Number(byId('desktop-window').value);
+      if (!desktopSupported || !app?.identityAvailable || !app.windows.some(w => w.id === windowId)) return;
+      api.postMessage({ type: 'inspectDesktop', applicationId: app.id, windowId, screenshot: !!byId('desktop-screenshot').checked });
+      return;
+    }
     const url = byId('target-url').value.trim();
+    if (type === 'github') {
+      if (!/^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+\/?$/i.test(url) || url.length > 2048) {
+        hasAnalysisFeedback = true;
+        byId('analysis-progress').textContent = 'Enter a public repository URL such as https://github.com/owner/repository.';
+        return;
+      }
+      api.postMessage({ type: 'analyzeGitHubRepository', url });
+      return;
+    }
     let parsed;
     try { parsed = new URL(url); } catch { /* Human-readable validation below. */ }
     if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || url.length > 2048) {
@@ -96,15 +156,57 @@
   window.addEventListener('message', event => {
     const message = event.data;
     switch (message.type) {
+      case 'desktopApplications': {
+        desktopApplications = message.applications;
+        const select = byId('desktop-application'); select.replaceChildren();
+        const placeholder = node('option', 'Select an application'); placeholder.value = ''; select.append(placeholder); select.value = '';
+        for (const app of desktopApplications) { const option = node('option', `${app.name} · PID ${app.pid}${app.identityAvailable ? '' : ' · stable launch identity unavailable'}`); option.value = app.id; select.append(option); }
+        if (message.message) byId('desktop-permissions').textContent = message.message;
+        desktopWindows(); break;
+      }
+      case 'desktopReset':
+        desktopAvailable = false; byId('desktop-report').textContent = ''; byId('desktop-image').replaceChildren();
+        byId('desktop-handoff-status').textContent = ''; byId('desktop-details').hidden = true;
+        byId('view-desktop').setAttribute('aria-expanded', 'false'); buttons(); break;
+      case 'desktopReport': {
+        const report = message.report; desktopAvailable = true;
+        byId('desktop-summary').textContent = `${report.name} · PID ${report.pid} · window ${report.windowId} · Accessibility: ${report.accessibility} (${report.nodes} nodes) · Screenshot: ${report.screenshot}. No interactions were performed.`;
+        byId('desktop-report').textContent = report.markdown;
+        const preview = byId('desktop-image'); preview.replaceChildren();
+        const image = report.image;
+        if (image && typeof image.base64 === 'string' && image.base64.length <= 20000000 && /^[A-Za-z0-9+/]+={0,2}$/.test(image.base64)) {
+          const img = node('img', ''); img.setAttribute('src', `data:image/png;base64,${image.base64}`); img.setAttribute('alt', 'Verified selected application window');
+          preview.append(img, node('p', `${image.width} × ${image.height}px · PNG SHA-256 ${image.sha256}`));
+        }
+        buttons(); break;
+      }
+      case 'desktopHandoff': byId('desktop-handoff-status').textContent = message.message; break;
+      case 'repositoryReset':
+        repositoryAvailable = false;
+        byId('repository-details').textContent = '';
+        byId('repository-handoff-status').textContent = '';
+        byId('desktop-details').hidden = true;
+  byId('repository-details').hidden = true;
+        byId('view-repository').setAttribute('aria-expanded', 'false');
+        buttons(); break;
+      case 'repositoryReport': {
+        const report = message.report;
+        repositoryAvailable = true;
+        byId('repository-summary').textContent = `${report.target} · ${report.commit} · ${report.entries} entries · ${report.files} captured files · ${report.languages.map(l => l.name).join(', ')} · ${report.dependencies} declared dependencies · REA: ${report.rea}`;
+        byId('repository-details').textContent = report.markdown;
+        buttons(); break;
+      }
+      case 'repositoryHandoff': byId('repository-handoff-status').textContent = message.message; break;
       case 'status': {
+        desktopSupported = message.desktopSupported === true;
         trusted = message.trusted; connected = message.state === 'connected'; busy = message.busy;
         const connecting = message.state === 'connecting';
         byId('connection-indicator').textContent = !trusted ? 'Workspace not trusted' : connected ? 'Ready' : connecting ? 'Starting REA…' : 'Not connected';
         byId('connection-indicator').className = connected ? 'connection-ready' : 'connection-offline';
         byId('reconnect').hidden = connected || connecting || !trusted;
-        if (!trusted) byId('analysis-progress').textContent = 'Trust this workspace in VS Code before analyzing a website.';
+        if (!trusted) byId('analysis-progress').textContent = 'Trust this workspace in VS Code before analyzing an application.';
         else if (!connected && !connecting) byId('analysis-progress').textContent = message.state === 'error' ? 'REA could not connect. See REA output for details, then choose Reconnect.' : 'The REA connection is closed. Choose Reconnect to continue; see REA output for details.';
-        else if (connected && !reportAvailable && !busy && !hasAnalysisFeedback) byId('analysis-progress').textContent = 'Paste a website address to get started.';
+        else if (connected && !reportAvailable && !busy && !hasAnalysisFeedback) byId('analysis-progress').textContent = type === 'desktop' ? 'Discover running applications and select a window to inspect.' : type === 'github' ? 'Paste a public GitHub repository URL to get started.' : 'Paste a website address to get started.';
         buttons(); break;
       }
       case 'analysisReset': reset(); byId('analysis-meter').hidden = false; break;
@@ -112,7 +214,7 @@
         hasAnalysisFeedback = true;
         byId('analysis-progress').textContent = message.message;
         byId('analysis-meter').value = message.percent;
-        byId('analysis-meter').hidden = !busy || message.percent === 0;
+        byId('analysis-meter').hidden = !busy || message.percent === 0 || message.percent === 100;
         break;
       case 'scenarioEvidence': {
         const evidence = message.evidence;
@@ -187,5 +289,7 @@
       }
     }
   });
+  byId('desktop-details').hidden = true;
+  byId('repository-details').hidden = true;
   reset();
 })();

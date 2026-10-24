@@ -35,7 +35,7 @@ class Node {
 function descendants(node: Node): Node[] { return node.children.flatMap(child => [child, ...descendants(child)]); }
 
 function setup() {
-  const ids = ['create-reconstruction', 'screenshot-preview', 'connect', 'disconnect', 'refresh', 'execute', 'detail', 'name', 'description', 'schema', 'parameters', 'search', 'count', 'tools', 'status', 'notice', 'result', 'result-status', 'original-response', 'original-section', 'expand-all', 'collapse-all', 'execution-policy', 'parameter-error', 'target-url', 'cdp-endpoint', 'analyze-target', 'export-report', 'analysis-progress', 'analysis-meter', 'analysis-findings', 'reconstruction-spec', 'evidence-summary', 'web-analyzer', 'target-web', 'target-github', 'target-desktop', 'coming-soon', 'connection-indicator', 'reconnect', 'open-setup', 'prepare-reconstruction', 'view-analysis', 'analysis-results', 'preparation-status', 'analysis-detail-panel', 'human-findings', 'component-summary', 'interaction-summary', 'resource-summary', 'missing-summary', 'report-target', 'analysis-status', 'report-readiness'];
+  const ids = ['desktop-picker', 'discover-desktop', 'desktop-permissions', 'desktop-application', 'desktop-window', 'desktop-screenshot', 'desktop-results', 'desktop-summary', 'view-desktop', 'export-desktop', 'handoff-desktop', 'desktop-handoff-status', 'desktop-details', 'desktop-image', 'desktop-report', 'target-url-label', 'repository-results', 'repository-summary', 'view-repository', 'export-repository', 'handoff-repository', 'repository-handoff-status', 'repository-details', 'explore-interactions', 'generate-with-ai', 'scenario-evidence', 'create-reconstruction', 'screenshot-preview', 'connect', 'disconnect', 'refresh', 'execute', 'detail', 'name', 'description', 'schema', 'parameters', 'search', 'count', 'tools', 'status', 'notice', 'result', 'result-status', 'original-response', 'original-section', 'expand-all', 'collapse-all', 'execution-policy', 'parameter-error', 'target-url', 'cdp-endpoint', 'analyze-target', 'export-report', 'analysis-progress', 'analysis-meter', 'analysis-findings', 'reconstruction-spec', 'evidence-summary', 'web-analyzer', 'target-web', 'target-github', 'target-desktop', 'coming-soon', 'connection-indicator', 'reconnect', 'open-setup', 'prepare-reconstruction', 'view-analysis', 'analysis-results', 'preparation-status', 'analysis-detail-panel', 'human-findings', 'component-summary', 'interaction-summary', 'resource-summary', 'missing-summary', 'report-target', 'analysis-status', 'report-readiness'];
   const nodes = Object.fromEntries(ids.map(id => [id, new Node('div')]));
   const sent: unknown[] = [];
   const receivers: Array<(event: { data: unknown }) => void> = [];
@@ -237,16 +237,17 @@ describe('Web analyzer view', () => {
 
 
 describe('Simple REA application experience', () => {
-  it('marks upcoming target types honestly and never starts their workflows', () => {
+  it('enables GitHub and explains unsupported Desktop hosts', () => {
     const { nodes, send, sent } = setup();
     send({ type: 'status', state: 'connected', trusted: true, busy: false });
     nodes['target-url'].value = 'https://example.test/';
     nodes['target-github'].click();
-    expect(nodes['coming-soon'].textContent).toContain('GitHub analysis is coming soon');
-    expect(nodes['analyze-target'].disabled).toBe(true);
+    expect(nodes['coming-soon'].hidden).toBe(true);
+    expect(nodes['analyze-target'].disabled).toBe(false);
+    expect(nodes['target-url-label'].textContent).toBe('GitHub repository URL');
     nodes['analyze-target'].click();
     nodes['target-desktop'].click();
-    expect(nodes['coming-soon'].textContent).toContain('Desktop App analysis is coming soon');
+    expect(nodes['coming-soon'].textContent).toContain('requires a local macOS');
     expect(nodes['analyze-target'].disabled).toBe(true);
     expect(sent).toEqual([{ type: 'ready' }]);
     nodes['target-web'].click();
@@ -317,4 +318,57 @@ it('renders the screenshot with provenance and exposes creation only after prepa
   send({ type: 'analysisReport', report: { ...report, screenshot: undefined, findings: [{ area: 'Visual evidence', classification: 'UNKNOWN', detail: 'Screenshot failed: Timeout' }] } });
   expect(descendants(nodes['screenshot-preview']).some(n => n.tag === 'img')).toBe(false);
   expect(nodes['screenshot-preview'].textContent).toContain('Timeout');
+});
+
+
+it('collects GitHub input and exposes report and evidence handoff without touching web actions', () => {
+  const { nodes, send, sent } = setup();
+  send({ type: 'status', state: 'connected', trusted: true, busy: false });
+  nodes['target-github'].click();
+  nodes['target-url'].value = 'https://github.com/example/app';
+  nodes['analyze-target'].click();
+  expect(sent.at(-1)).toEqual({ type: 'analyzeGitHubRepository', url: 'https://github.com/example/app' });
+  send({ type: 'repositoryReport', report: { target: 'https://github.com/example/app', commit: 'abc', entries: 5, files: 2, languages: [{ name: 'JavaScript' }], dependencies: 3, rea: 'captured', markdown: '<script>untrusted</script>' } });
+  expect(nodes['repository-results'].hidden).toBe(false);
+  expect(nodes['repository-details'].textContent).toContain('<script>');
+  expect(nodes['analysis-results'].hidden).toBe(true);
+  nodes['view-repository'].click();
+  expect(nodes['repository-details'].hidden).toBe(false);
+  nodes['export-repository'].click(); expect(sent.at(-1)).toEqual({ type: 'exportRepositoryReport' });
+  nodes['handoff-repository'].click(); expect(sent.at(-1)).toEqual({ type: 'handoffRepository' });
+  nodes['target-web'].click(); expect(nodes['repository-results'].hidden).toBe(true);
+  nodes['target-github'].click(); expect(nodes['repository-results'].hidden).toBe(false);
+  expect(nodes['target-url'].value).toBe('https://github.com/example/app');
+  send({ type: 'status', state: 'connected', trusted: false, busy: false });
+  expect(nodes['handoff-repository'].disabled).toBe(true);
+});
+
+
+it('discovers and inspects only a selected Desktop application/window while retaining other modes', () => {
+  const { nodes, send, sent } = setup();
+  send({ type: 'status', state: 'connected', trusted: true, busy: false, desktopSupported: true });
+  nodes['target-desktop'].click();
+  expect(nodes['coming-soon'].hidden).toBe(true);
+  expect(nodes['target-url'].hidden).toBe(true);
+  expect(nodes['analyze-target'].disabled).toBe(true);
+  nodes['discover-desktop'].click(); expect(sent.at(-1)).toEqual({ type: 'discoverDesktop' });
+  const id = 'a'.repeat(24);
+  send({ type: 'desktopApplications', applications: [{ id, name: '<script>fixture</script>', pid: 123, identityAvailable: true, windows: [{ id: 456, title: 'Fixture' }] }], message: 'Accessibility available' });
+  expect(nodes['desktop-application'].textContent).toContain('<script>');
+  nodes['desktop-application'].value = id; nodes['desktop-application'].listeners.change();
+  nodes['desktop-window'].value = '456'; nodes['desktop-window'].listeners.change();
+  expect(nodes['analyze-target'].disabled).toBe(false);
+  (nodes['desktop-screenshot'] as any).checked = true;
+  nodes['analyze-target'].click(); expect(sent.at(-1)).toEqual({ type: 'inspectDesktop', applicationId: id, windowId: 456, screenshot: true });
+  send({ type: 'desktopReport', report: { name: 'Fixture', pid: 123, windowId: 456, nodes: 3, accessibility: 'captured', screenshot: 'permission-denied', markdown: '<img untrusted>' } });
+  expect(nodes['desktop-results'].hidden).toBe(false);
+  expect(nodes['desktop-report'].textContent).toBe('<img untrusted>');
+  nodes['view-desktop'].click(); expect(nodes['desktop-details'].hidden).toBe(false);
+  nodes['export-desktop'].click(); expect(sent.at(-1)).toEqual({ type: 'exportDesktopReport' });
+  nodes['handoff-desktop'].click(); expect(sent.at(-1)).toEqual({ type: 'handoffDesktop' });
+  nodes['target-github'].click(); expect(nodes['desktop-results'].hidden).toBe(true);
+  expect(nodes['target-url'].hidden).toBe(false);
+  nodes['target-desktop'].click(); expect(nodes['desktop-results'].hidden).toBe(false);
+  send({ type: 'status', state: 'connected', trusted: false, busy: false, desktopSupported: true });
+  expect(nodes['analyze-target'].disabled).toBe(true); expect(nodes['handoff-desktop'].disabled).toBe(true);
 });

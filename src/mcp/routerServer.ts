@@ -71,7 +71,7 @@ export function createRouterServer(upstream: Client) {
 export async function runRouterServer(engineScript: string) {
   if (!engineScript || !path.isAbsolute(engineScript)) throw new Error('Router requires an absolute REA engine script path.');
   const upstream = new Client({ name: 'rea-universal-router-upstream', version: '0.4.0' });
-  const transport = new StdioClientTransport({ command: process.execPath, args: [engineScript, 'mcp'], stderr: 'pipe', maxBufferSize: 64 * 1024 * 1024 });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [engineScript, '--mcp'], stderr: 'pipe', maxBufferSize: 64 * 1024 * 1024 });
   const stderr = transport.stderr;
   stderr?.on('data', () => { /* Drain engine diagnostics without retaining target data. */ });
   await upstream.connect(transport);

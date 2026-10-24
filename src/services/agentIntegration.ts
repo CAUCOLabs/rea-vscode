@@ -9,7 +9,7 @@ export function launchConfiguration(executable: string, scriptPath: string) {
   executable = executable.trim(); scriptPath = scriptPath.trim();
   if (!executable) throw new Error('REA executable cannot be empty.');
   if (scriptPath && !path.isAbsolute(scriptPath)) throw new Error('REA scriptPath must be absolute.');
-  return { command: executable, args: [engineScript(scriptPath), 'mcp'] };
+  return { command: executable, args: [engineScript(scriptPath), '--mcp'] };
 }
 
 export function codexConfiguration(command: string, args: string[]) {
@@ -65,6 +65,44 @@ export function mergeAgentConfiguration(existing: string, command: string, args:
   }
   try { parse(result); } catch { throw new Error('Existing MCP configuration cannot be safely extended. Add rea_browser manually.'); }
   return result === existing ? undefined : result;
+}
+
+// Copilot's Agent Host reads portable workspace configuration independently of
+// the editor MCP registry. Preserve existing server entries, including REA.
+export function mergeCopilotConfiguration(existing: string, command: string, args: string[]): string | undefined {
+  const config = JSON.parse(existing || '{}');
+  if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Copilot configuration must be a JSON object.');
+  const servers = config.mcpServers;
+  if (servers !== undefined && (!servers || typeof servers !== 'object' || Array.isArray(servers))) throw new Error('mcpServers must be an object.');
+  if (servers && Object.hasOwn(servers, 'rea')) return undefined;
+  config.mcpServers = { ...servers, rea: { command, args } };
+  return JSON.stringify(config, null, 2) + '\n';
+}
+
+export async function configureCopilot() {
+  if (!vscode.workspace.isTrusted) throw new Error('REA requires a trusted workspace.');
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders?.length) throw new Error('Open a local project folder before configuring Copilot. Folderless Agent Host chats cannot read project MCP configuration.');
+  const folder = folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick({ placeHolder: 'Project used by the Copilot session' });
+  if (!folder || folder.uri.scheme !== 'file') throw new Error('Open a local project folder before configuring Copilot. Folderless Agent Host chats cannot read project MCP configuration.');
+  const config = vscode.workspace.getConfiguration('rea');
+  const { command, args } = await resolveEngineLaunch(config.get('executable', 'node'), config.get('scriptPath', ''));
+  const target = vscode.Uri.joinPath(folder.uri, '.mcp.json');
+  const read = async () => {
+    try { return Buffer.from(await vscode.workspace.fs.readFile(target)).toString('utf8'); }
+    catch (error) { if (error instanceof vscode.FileSystemError && error.code === 'FileNotFound') return undefined; throw error; }
+  };
+  const existing = await read();
+  const merged = mergeCopilotConfiguration(existing ?? '', command, args);
+  if (merged !== undefined) {
+    if (!vscode.workspace.isTrusted) throw new Error('REA requires a trusted workspace.');
+    if (await read() !== existing) throw new Error('Copilot configuration changed. Retry; no settings were written.');
+    await vscode.workspace.fs.writeFile(target, Buffer.from(merged));
+  }
+  await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(target));
+  await vscode.window.showInformationMessage(merged === undefined
+    ? 'Existing Copilot REA configuration preserved. Review it in .mcp.json. Agent discovery and invocation have not been verified.'
+    : 'REA full engine configured in .mcp.json for Copilot sessions using this project. Start a new session in this folder and review its MCP trust prompts. Agent discovery and invocation have not been verified.');
 }
 
 export function registerAgentIntegration(context: vscode.ExtensionContext) {

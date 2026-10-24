@@ -19,13 +19,13 @@ vi.mock('vscode', () => ({
   Uri: { joinPath: (...parts: string[]) => parts.map(p => typeof p === 'string' ? p : (p as any).fsPath).join('/') },
   window: { showOpenDialog: state.select, showErrorMessage: state.error, showTextDocument: vi.fn(), showInformationMessage: state.info, showWarningMessage: vi.fn() }
 }));
-import { codexConfiguration, launchConfiguration, mergeCodexConfiguration, validateCodexLaunch, registerAgentIntegration } from '../src/services/agentIntegration';
+import { codexConfiguration, launchConfiguration, mergeCodexConfiguration, validateCodexLaunch, registerAgentIntegration, configureCopilot, mergeCopilotConfiguration } from '../src/services/agentIntegration';
 import { initializeEngineRuntime } from '../src/services/engineRuntime';
 beforeEach(() => { vi.clearAllMocks(); initializeEngineRuntime('/extension'); state.trusted = true; state.commands.clear(); state.folders = undefined; state.select.mockResolvedValue([{ scheme: 'file', fsPath: '/chosen-project' }]); state.stat.mockResolvedValue({ isFile: () => true }); state.access.mockResolvedValue(undefined); });
 it('provides the real engine with no catalog proxy or allowlist and enforces trust', () => {
   registerAgentIntegration({ subscriptions: [], asAbsolutePath: (p: string) => '/extension/' + p } as any);
   const definitions = state.provider.provideMcpServerDefinitions();
-  expect(definitions[0]).toMatchObject({ command: process.execPath, args: ['/extension/runtime/rea/scripts/rea.mjs','mcp'] });
+  expect(definitions[0]).toMatchObject({ command: process.execPath, args: ['/extension/runtime/rea/scripts/rea.mjs','--mcp'] });
   expect(definitions[1]).toMatchObject({ command: process.execPath, args: ['/extension/dist/browserServer.js'], env: {} });
   expect(definitions[2]).toMatchObject({ command: process.execPath, args: ['/extension/dist/routerServer.js', '/extension/runtime/rea/scripts/rea.mjs'], env: {} });
   state.trusted = false;
@@ -37,7 +37,7 @@ it('resolves native MCP definitions to the packaged engine and an absolute Node 
   const definition = state.provider.provideMcpServerDefinitions()[0];
   const resolved = await state.provider.resolveMcpServerDefinition(definition);
   expect(resolved.command).toBe(process.execPath);
-  expect(resolved.args).toEqual(['/extension/runtime/rea/scripts/rea.mjs', 'mcp']);
+  expect(resolved.args).toEqual(['/extension/runtime/rea/scripts/rea.mjs', '--mcp']);
 });
 it('writes separate Codex project configuration while retaining existing settings', async () => {
   registerAgentIntegration({ subscriptions: [], asAbsolutePath: (p: string) => '/extension/' + p } as any);
@@ -98,9 +98,9 @@ it('does not overwrite invalid TOML or a concurrently edited file', async () => 
   expect(state.write).not.toHaveBeenCalled();
 });
 it('recognizes quoted and dotted REA keys and preserves unrelated servers verbatim', () => {
-  for (const text of ['[mcp_servers."rea"]\ncommand="old"', 'mcp_servers.rea.command="old"', "[mcp_servers.'rea'.env]\nX='Y'"]) expect(mergeCodexConfiguration(text, '/node', ['mcp'])).toBeUndefined();
+  for (const text of ['[mcp_servers."rea"]\ncommand="old"', 'mcp_servers.rea.command="old"', "[mcp_servers.'rea'.env]\nX='Y'"]) expect(mergeCodexConfiguration(text, '/node', ['--mcp'])).toBeUndefined();
   const text = '# Keep my comments\nmodel="example"\n[mcp_servers.other.env]\nX="Y"\n';
-  expect(mergeCodexConfiguration(text, '/node', ['mcp'])).toContain(text);
+  expect(mergeCodexConfiguration(text, '/node', ['--mcp'])).toContain(text);
   expect(() => mergeCodexConfiguration('mcp_servers = { other = { command="keep" } }', '/node', [])).toThrow('safely extended');
 });
 it('uses the current workspace only as a folder-picker default', async () => {
@@ -133,7 +133,7 @@ it('preserves configuration on read failures and when trust is revoked during se
 it('adds the browser companion when REA already exists without rewriting it', async () => {
   const { mergeAgentConfiguration } = await import('../src/services/agentIntegration');
   const existing = '# retain\n[mcp_servers.rea]\ncommand="custom-rea"\n';
-  const result = mergeAgentConfiguration(existing, '/rea-node', ['/rea-cli','mcp'], '/extension/dist/browserServer.js', '/node');
+  const result = mergeAgentConfiguration(existing, '/rea-node', ['/rea-cli','--mcp'], '/extension/dist/browserServer.js', '/node');
   expect(result).toContain(existing);
   expect(result).toContain('[mcp_servers.rea_browser]\ncommand = "/node"');
   expect(result).not.toContain('ELECTRON_RUN_AS_NODE');
@@ -141,13 +141,44 @@ it('adds the browser companion when REA already exists without rewriting it', as
 });
 
 it('uses the packaged engine by default instead of resolving packages with npx', () => {
-  expect(launchConfiguration(process.execPath, '')).toMatchObject({ args: ['/extension/runtime/rea/scripts/rea.mjs', 'mcp'] });
+  expect(launchConfiguration(process.execPath, '')).toMatchObject({ args: ['/extension/runtime/rea/scripts/rea.mjs', '--mcp'] });
 });
 it('uses an installed Node and the installed extension bundle for browser configuration', async () => {
   const { mergeAgentConfiguration } = await import('../src/services/agentIntegration');
-  const result = mergeAgentConfiguration('', '/node', ['/engine/rea.mjs','mcp'], '/installed extension/dist/browserServer.js', '/node', '/browser with spaces/chrome');
+  const result = mergeAgentConfiguration('', '/node', ['/engine/rea.mjs','--mcp'], '/installed extension/dist/browserServer.js', '/node', '/browser with spaces/chrome');
   expect(result).toContain('command = "/node"');
   expect(result).toContain('--browser-executable');
   expect(result).toContain('/browser with spaces/chrome');
   expect(result).not.toContain('ELECTRON_RUN_AS_NODE');
+});
+
+
+it('merges portable Copilot configuration without filtering the full engine catalog', () => {
+  const result = JSON.parse(mergeCopilotConfiguration('{"other":true,"mcpServers":{"keep":{"command":"custom"}}}', '/node', ['/rea.mjs', '--mcp'])!);
+  expect(result).toEqual({ other: true, mcpServers: { keep: { command: 'custom' }, rea: { command: '/node', args: ['/rea.mjs', '--mcp'] } } });
+  expect(mergeCopilotConfiguration('{"mcpServers":{"rea":{"command":"custom"}}}', '/node', [])).toBeUndefined();
+  for (const invalid of ['[]', 'null', '{"mcpServers":[]}', '{"mcpServers":null}', '{']) expect(() => mergeCopilotConfiguration(invalid, '/node', [])).toThrow();
+});
+it('writes Copilot portable configuration in the actual project and detects concurrent edits', async () => {
+  state.folders = [{ uri: { scheme: 'file', fsPath: '/project' } }];
+  state.read.mockResolvedValue(Buffer.from('{"mcpServers":{"keep":{"command":"custom"}}}'));
+  await configureCopilot();
+  expect(state.write.mock.calls[0][0]).toBe('/project/.mcp.json');
+  expect(JSON.parse(state.write.mock.calls[0][1].toString()).mcpServers.rea.args).toEqual(['/extension/runtime/rea/scripts/rea.mjs', '--mcp']);
+  state.write.mockClear();
+  state.read.mockResolvedValueOnce(Buffer.from('{}')).mockResolvedValueOnce(Buffer.from('{"changed":true}'));
+  await expect(configureCopilot()).rejects.toThrow('configuration changed');
+  expect(state.write).not.toHaveBeenCalled();
+  state.trusted = false;
+  await expect(configureCopilot()).rejects.toThrow('trusted');
+});
+
+it('preserves existing Copilot REA entries and rejects folderless sessions', async () => {
+  await expect(configureCopilot()).rejects.toThrow('local project folder');
+  expect(state.write).not.toHaveBeenCalled();
+  state.folders = [{ uri: { scheme: 'file', fsPath: '/project' } }];
+  state.read.mockResolvedValue(Buffer.from('{"mcpServers":{"rea":{"command":"keep"}}}'));
+  await configureCopilot();
+  expect(state.write).not.toHaveBeenCalled();
+  expect(state.info).toHaveBeenCalledWith(expect.stringContaining('preserved'));
 });

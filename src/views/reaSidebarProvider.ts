@@ -1,4 +1,10 @@
-import { createReconstructionProject } from '../analysis/reconstructionProject';
+import { discoverDesktopApplications, type DesktopApplication } from '../services/desktopDiscovery';
+import { analyzeDesktopApplication, exportDesktopReport, type DesktopReport } from '../analysis/desktopAnalyzer';
+import { createDesktopHandoff } from '../services/desktopHandoff';
+import { resolveEngineLaunch } from '../services/engineRuntime';
+import { analyzeGitHubRepository, exportRepositoryReport, type RepositoryReport } from '../analysis/githubRepositoryAnalyzer';
+import { createRepositoryHandoff } from '../services/repositoryHandoff';
+import { createReconstructionProject, type InitialScenarioEvidence } from '../analysis/reconstructionProject';
 import { openReconstructionInAgent } from '../services/reconstructionAgent';
 import * as vscode from 'vscode';
 import { presentAnalysis } from '../analysis/analysisPresentation';
@@ -19,8 +25,13 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
   private autoConnectAttempted = false;
   private browser?: BrowserLease;
   private analysisReport?: WebReport;
+  private desktopReport?: DesktopReport;
+  private desktopController?: AbortController;
+  private desktopApplications = new Map<string, DesktopApplication>();
+  private repositoryReport?: RepositoryReport;
+  private repositoryController?: AbortController;
   private reconstructionProjectPath?: string;
-  private scenarioEvidence?: { target: string; screenshot?: string; screenshotHash?: string; dom?: string; domHash?: string; accessibility?: string; accessibilityHash?: string; url?: string; completeness?: string };
+  private scenarioEvidence?: InitialScenarioEvidence;
   private analysisController?: AbortController;
   private generation = 0;
   private readonly subscriptions: vscode.Disposable[] = [];
@@ -32,6 +43,8 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
   ) {
     this.subscriptions.push(manager.onDidChange(() => {
       if (manager.getState() !== 'connected') {
+        this.repositoryController?.abort();
+        this.desktopController?.abort();
         const retainPartial = manager.getState() === 'disconnected' && this.analysisController && !this.analysisController.signal.aborted;
         if (this.analysisController && !retainPartial) {
           this.analysisController.abort();
@@ -68,9 +81,10 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
 <button id="open-setup">Set up REA</button><div class="connection-row"><span id="connection-indicator" role="status">Starting REA…</span><button id="reconnect" class="text-button" hidden>Reconnect</button></div>
 <section id="web-analyzer" aria-label="Analyze an application">
 <fieldset class="target-picker"><legend>What would you like to explore?</legend><div class="target-options">
-<button id="target-web" class="target-option" aria-pressed="true">Web</button><button id="target-github" class="target-option" aria-pressed="false">GitHub<span>Coming soon</span></button><button id="target-desktop" class="target-option" aria-pressed="false">Desktop App<span>Coming soon</span></button>
+<button id="target-web" class="target-option" aria-pressed="true">Web</button><button id="target-github" class="target-option" aria-pressed="false">GitHub</button><button id="target-desktop" class="target-option" aria-pressed="false">Desktop App</button>
 </div></fieldset><p id="coming-soon" class="hint" hidden></p>
-<label for="target-url" class="input-label">Website URL</label><input id="target-url" aria-describedby="analysis-progress" type="url" placeholder="https://example.com" autocomplete="off" spellcheck="false">
+<label id="target-url-label" for="target-url" class="input-label">Website URL</label><input id="target-url" aria-describedby="analysis-progress" type="url" placeholder="https://example.com" autocomplete="off" spellcheck="false">
+<section id="desktop-picker" hidden aria-label="Running macOS applications"><button id="discover-desktop">Discover running applications</button><p id="desktop-permissions" role="status"></p><label for="desktop-application">Application</label><select id="desktop-application" disabled></select><label for="desktop-window">Window</label><select id="desktop-window" disabled></select><label><input id="desktop-screenshot" type="checkbox"> Capture selected-window screenshot</label><p class="hint">Read-only inspection. Accessibility and Screen Recording permissions are managed by macOS. Application contents may be sensitive.</p></section>
 <button id="analyze-target" class="primary-action" disabled>Analyze</button>
 <div class="progress-area"><p id="analysis-progress" role="status">Getting ready…</p><progress id="analysis-meter" value="0" max="100" aria-label="Analysis progress" hidden></progress></div>
 <section id="analysis-results" hidden aria-label="Your analysis"><div class="result-heading"><h2 id="analysis-status">Your analysis</h2><span class="result-badge">Website snapshot</span></div>
@@ -81,7 +95,9 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
 <div class="result-card"><h3>Missing information</h3><ul id="missing-summary"></ul></div>
 <div class="result-actions"><button id="view-analysis" aria-expanded="false">View Analysis</button><button id="export-report" disabled>Export Report</button><button id="explore-interactions" disabled>Explore Interactions</button><button id="prepare-reconstruction" disabled>Prepare Reconstruction</button></div>
 <button id="create-reconstruction" hidden disabled>Create Reconstruction Project</button><button id="generate-with-ai" hidden disabled>Generate with AI</button><p id="preparation-status" role="status"></p><section id="analysis-detail-panel" hidden aria-label="Analysis details"><h3>Analysis details</h3><div id="screenshot-preview"></div><div id="scenario-evidence" hidden></div><div id="human-findings"></div></section>
-</section></section>
+</section>
+<section id="desktop-results" hidden aria-label="Desktop evidence"><div class="result-heading"><h2>Desktop application evidence</h2><span class="result-badge">Passive snapshot</span></div><p id="desktop-summary"></p><div class="result-actions"><button id="view-desktop" aria-expanded="false">View Analysis</button><button id="export-desktop" disabled>Export Report</button><button id="handoff-desktop" disabled>Prepare Agent Handoff</button></div><p id="desktop-handoff-status" role="status"></p><section id="desktop-details" hidden><div id="desktop-image"></div><pre id="desktop-report"></pre></section></section>
+<section id="repository-results" hidden aria-label="Repository analysis"><div class="result-heading"><h2>Repository analysis</h2><span class="result-badge">Static snapshot</span></div><p id="repository-summary"></p><div class="result-actions"><button id="view-repository" aria-expanded="false">View Analysis</button><button id="export-repository" disabled>Export Report</button><button id="handoff-repository" disabled>Prepare Agent Handoff</button></div><p id="repository-handoff-status" role="status"></p><pre id="repository-details" hidden></pre></section></section>
 <details id="advanced-explorer"><summary>Advanced / Developer Tools</summary>
 <p id="status" role="status">Disconnected</p><div class="actions"><button id="connect">Connect</button><button id="disconnect" disabled>Disconnect</button><button id="refresh" disabled>Refresh tools</button></div><p id="notice" role="status"></p>
 <details><summary>Browser connection details</summary><p>REA creates a dedicated temporary browser for each analysis. Personal profiles and arbitrary endpoints are never attached.</p><label for="cdp-endpoint">Managed connection</label><input id="cdp-endpoint" readonly value="Not running"></details>
@@ -95,6 +111,8 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
     const receiver = view.webview.onDidReceiveMessage((message: unknown) => { void this.receive(message); });
     const disposal = view.onDidDispose(() => {
       receiver.dispose();
+      this.repositoryController?.abort();
+      this.desktopController?.abort();
       if (this.view === view) this.view = undefined;
     });
     this.subscriptions.push(receiver, disposal);
@@ -103,7 +121,7 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
   private send(message: object): void { void this.view?.webview.postMessage(message); }
 
   updateStatus(): void {
-    this.send({ type: 'status', state: this.manager.getState(), trusted: vscode.workspace.isTrusted, busy: this.busy });
+    this.send({ type: 'status', state: this.manager.getState(), trusted: vscode.workspace.isTrusted, busy: this.busy, desktopSupported: process.platform === 'darwin' });
   }
 
   private async refresh(): Promise<void> {
@@ -146,6 +164,9 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
     if (!message) return;
     if (message.type === 'ready') {
       this.updateStatus();
+      if (this.desktopReport) this.send({ type: 'desktopReport', report: this.desktopPresentation(this.desktopReport) });
+      if (this.desktopApplications.size) this.sendDesktopApplications();
+      if (this.repositoryReport) this.send({ type: 'repositoryReport', report: this.repositoryPresentation(this.repositoryReport) });
       if (this.analysisReport) this.send({ type: 'analysisReport', report: this.analysisReport, presentation: presentAnalysis(this.analysisReport) });
       if (this.scenarioEvidence) this.send({ type: 'scenarioEvidence', evidence: this.scenarioEvidence });
       if (this.reconstructionProjectPath) this.send({ type: 'projectCreated', path: this.reconstructionProjectPath, message: `Reconstruction project ready: ${this.reconstructionProjectPath}` });
@@ -172,6 +193,111 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
           if (this.manager.isConnected()) await this.refresh();
           break;
         case 'disconnect': await vscode.commands.executeCommand('rea.disconnect'); break;
+        case 'discoverDesktop': {
+          if (!vscode.workspace.isTrusted) break;
+          const controller = new AbortController(); this.desktopController = controller;
+          this.desktopApplications.clear();
+          this.send({ type: 'desktopApplications', applications: [], message: 'Discovering running macOS applications…' });
+          try {
+            const discovery = await discoverDesktopApplications(controller.signal);
+            if (controller.signal.aborted || operationGeneration !== this.generation || !vscode.workspace.isTrusted) break;
+            for (const app of discovery.applications) this.desktopApplications.set(randomBytes(12).toString('hex'), app);
+            this.sendDesktopApplications(`Accessibility: ${discovery.permissions.accessibility ? 'available' : 'permission denied'}. Screen Recording: ${discovery.permissions.screenCapture ? 'available' : 'permission denied'}. ${!discovery.windowServerAvailable ? 'No GUI window-server session is available.' : 'Only visible normal windows are listed.'}${discovery.truncated ? ' Discovery is truncated.' : ''}`);
+          } catch (error) {
+            this.send({ type: 'desktopApplications', applications: [], message: error instanceof Error ? error.message : 'Desktop discovery failed.' });
+          } finally { this.desktopController = undefined; }
+          break;
+        }
+        case 'inspectDesktop': {
+          if (!vscode.workspace.isTrusted || !this.manager.isConnected()) break;
+          const application = this.desktopApplications.get(message.applicationId);
+          if (!application || !application.windows.some(w => w.id === message.windowId)) {
+            this.send({ type: 'analysisProgress', percent: 0, message: 'Discover running applications and select one of its windows before inspecting.' });
+            break;
+          }
+          const controller = new AbortController(); this.desktopController = controller;
+          this.desktopReport = undefined; this.send({ type: 'desktopReset' });
+          try {
+            const config = vscode.workspace.getConfiguration('rea');
+            const launch = await resolveEngineLaunch(config.get('executable', 'node'), config.get('scriptPath', ''));
+            const report = await analyzeDesktopApplication({ application, windowId: message.windowId, screenshot: message.screenshot, launch, signal: controller.signal,
+              allowed: () => vscode.workspace.isTrusted && this.manager.isConnected() && operationGeneration === this.generation,
+              progress: text => this.send({ type: 'analysisProgress', percent: 40, message: text }) });
+            if (!controller.signal.aborted && operationGeneration === this.generation && vscode.workspace.isTrusted) {
+              this.desktopReport = report;
+              this.send({ type: 'desktopReport', report: this.desktopPresentation(report) });
+              this.send({ type: 'analysisProgress', percent: 100, message: 'Desktop evidence collected. Review capture status, permissions and unknown functionality.' });
+            }
+          } catch (error) {
+            this.send({ type: 'analysisProgress', percent: 0, message: error instanceof Error ? error.message : 'Desktop inspection failed.' });
+          } finally { this.desktopController = undefined; }
+          break;
+        }
+        case 'exportDesktopReport': {
+          const report = this.desktopReport;
+          if (!report || !vscode.workspace.isTrusted) break;
+          const base = vscode.workspace.workspaceFolders?.[0]?.uri ?? this.extensionUri;
+          const destination = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.joinPath(base, 'desktop-analysis.md'), filters: { Markdown: ['md'] }, saveLabel: 'Export report' });
+          if (destination && this.desktopReport === report && vscode.workspace.isTrusted) {
+            await vscode.workspace.fs.writeFile(destination, new TextEncoder().encode(exportDesktopReport(report)));
+            this.send({ type: 'desktopHandoff', message: 'Desktop report exported. Prepare Agent Handoff to include original evidence and the screenshot when captured.' });
+          }
+          break;
+        }
+        case 'handoffDesktop': {
+          const report = this.desktopReport;
+          if (!report || !vscode.workspace.isTrusted) break;
+          const selection = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Choose evidence parent folder' });
+          if (!selection?.[0] || !vscode.workspace.isTrusted || this.desktopReport !== report) break;
+          const destination = await createDesktopHandoff(selection[0].fsPath, report);
+          this.send({ type: 'desktopHandoff', message: `Agent evidence saved to ${destination}. Provide agent-handoff.md and this folder to Codex or Copilot. No agent has been invoked.` });
+          await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(destination + '/agent-handoff.md'));
+          break;
+        }
+        case 'analyzeGitHubRepository': {
+          if (!vscode.workspace.isTrusted || !this.manager.isConnected()) {
+            this.send({ type: 'analysisProgress', percent: 0, message: 'Trust this workspace and reconnect to REA before analyzing.' });
+            break;
+          }
+          const controller = new AbortController();
+          this.repositoryController = controller;
+          this.repositoryReport = undefined;
+          this.send({ type: 'repositoryReset' });
+          try {
+            const report = await analyzeGitHubRepository({ url: message.url, signal: controller.signal, client: this.client,
+              allowed: () => vscode.workspace.isTrusted && this.manager.isConnected() && operationGeneration === this.generation,
+              progress: text => this.send({ type: 'analysisProgress', percent: 40, message: text }) });
+            if (!controller.signal.aborted && operationGeneration === this.generation && vscode.workspace.isTrusted) {
+              this.repositoryReport = report;
+              this.send({ type: 'repositoryReport', report: this.repositoryPresentation(report) });
+              this.send({ type: 'analysisProgress', percent: 100, message: 'Repository evidence is ready. Review coverage and inferred architecture in View Analysis.' });
+            }
+          } catch (error) {
+            this.send({ type: 'analysisProgress', percent: 0, message: error instanceof Error ? error.message : 'Repository analysis failed.' });
+          } finally { this.repositoryController = undefined; }
+          break;
+        }
+        case 'exportRepositoryReport': {
+          const report = this.repositoryReport;
+          if (!report || !vscode.workspace.isTrusted) break;
+          const base = vscode.workspace.workspaceFolders?.[0]?.uri ?? this.extensionUri;
+          const destination = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.joinPath(base, 'repository-analysis.md'), filters: { Markdown: ['md'] }, saveLabel: 'Export report' });
+          if (destination && this.repositoryReport === report && vscode.workspace.isTrusted) {
+            await vscode.workspace.fs.writeFile(destination, new TextEncoder().encode(exportRepositoryReport(report)));
+            this.send({ type: 'repositoryHandoff', message: 'Repository report exported. Prepare Agent Handoff to include captured source evidence and hashes.' });
+          }
+          break;
+        }
+        case 'handoffRepository': {
+          const report = this.repositoryReport;
+          if (!report || !vscode.workspace.isTrusted) break;
+          const selection = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Choose evidence parent folder' });
+          if (!selection?.[0] || this.repositoryReport !== report || !vscode.workspace.isTrusted) break;
+          const destination = await createRepositoryHandoff(selection[0].fsPath, report);
+          this.send({ type: 'repositoryHandoff', message: `Agent evidence saved to ${destination}. Open agent-handoff.md and provide it to Codex or Copilot. No agent has been invoked.` });
+          await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(destination + '/agent-handoff.md'));
+          break;
+        }
         case 'analyzeWebTarget': {
           if (!vscode.workspace.isTrusted || !this.manager.isConnected()) {
             this.send({ type: 'analysisProgress', percent: 0, message: 'Trust this workspace and reconnect to REA before analyzing.' });
@@ -272,6 +398,7 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
                 ? screenshot.data_base64 : undefined;
             const evidence = {
               target: report.target,
+              evidenceId: typeof structured?.evidence_id === 'string' ? structured.evidence_id : undefined,
               screenshot: screenshotData,
               screenshotHash: safeHash(screenshot?.sha256),
               dom: safeText(dom?.text),
@@ -315,7 +442,7 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
           const selection = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Choose parent folder' });
           if (!selection?.[0] || !vscode.workspace.isTrusted || this.analysisReport !== report) break;
           try {
-            const destination = await createReconstructionProject(selection[0].fsPath, report, `rea-reconstruction-${randomBytes(6).toString('hex')}`);
+            const destination = await createReconstructionProject(selection[0].fsPath, report, `rea-reconstruction-${randomBytes(6).toString('hex')}`, this.scenarioEvidence);
             this.reconstructionProjectPath = destination;
             this.send({ type: 'projectCreated', path: destination, message: `Reconstruction project created: ${destination}. Ready for AI-assisted implementation. Controls and backend remain unverified.` });
           } catch {
@@ -363,6 +490,8 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
         }
       }
     } catch {
+      if (message.type === 'exportDesktopReport' || message.type === 'handoffDesktop') this.send({ type: 'desktopHandoff', message: 'Desktop evidence export failed. Choose a writable destination and retry.' });
+      if (message.type === 'exportRepositoryReport' || message.type === 'handoffRepository') this.send({ type: 'repositoryHandoff', message: 'Repository export failed. Choose a writable destination and retry.' });
       if (message.type === 'exportWebReport') this.send({ type: 'analysisProgress', percent: 100, message: 'Markdown export failed. Choose a writable destination and retry.' });
       if (message.type === 'execute' && operationGeneration === this.generation && this.manager.isConnected() && vscode.workspace.isTrusted) {
         this.send({ type: 'result', text: resultText({ isError: true, content: [{ type: 'text', text: 'REA query failed. Check the connection and retry.' }] }), isError: true });
@@ -372,6 +501,22 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
       this.busy = false;
       this.updateStatus();
     }
+  }
+
+  private sendDesktopApplications(message?: string) {
+    this.send({ type: 'desktopApplications', applications: [...this.desktopApplications].map(([id, app]) => ({ id, name: app.name, pid: app.pid, identityAvailable: app.launchTime !== null, windows: app.windows.map(w => ({ id: w.id, title: w.title })) })), message });
+  }
+
+  private desktopPresentation(report: DesktopReport) {
+    return { name: report.application.name, pid: report.application.pid, windowId: report.windowId,
+      nodes: report.accessibility.nodes.length, accessibility: report.accessibility.status, screenshot: report.screenshot.status,
+      image: report.screenshot.image, markdown: exportDesktopReport(report) };
+  }
+
+  private repositoryPresentation(report: RepositoryReport) {
+    return { target: report.target, commit: report.commit, files: report.files.length, entries: report.entries.length,
+      languages: report.languages, frameworks: report.frameworks, dependencies: report.dependencies.length,
+      rea: report.rea.status, markdown: exportRepositoryReport(report) };
   }
 
   private reportWithScenarioEvidence(report: WebReport): string {
@@ -392,6 +537,11 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
 
   dispose(): void {
     this.analysisController?.abort();
+    this.repositoryController?.abort();
+    this.desktopController?.abort();
+    this.desktopReport = undefined;
+    this.desktopApplications.clear();
+    this.repositoryReport = undefined;
     void this.browser?.close().catch(() => undefined);
     this.analysisReport = undefined;
     this.reconstructionProjectPath = undefined;

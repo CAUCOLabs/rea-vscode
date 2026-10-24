@@ -19,7 +19,7 @@ it.skipIf(!process.env.REA_LIVE_SCRIPT)('audits installed REA without mutating i
     } catch (error) { results.push({ name, error: String(error) }); return undefined; }
   };
   try {
-    await c.connect(process.execPath, [process.env.REA_LIVE_SCRIPT!, 'mcp']);
+    await c.connect(process.execPath, [process.env.REA_LIVE_SCRIPT!, '--mcp']);
     const catalog = c.getTools(); expect(catalog.length).toBeGreaterThan(200);
     expect(new Set(catalog.map(t => t.name)).size).toBe(catalog.length);
     for (const tool of catalog) expect(tool.inputSchema.type).toBe('object');
@@ -65,7 +65,7 @@ it.skipIf(!process.env.REA_LIVE_SCRIPT)('audits installed REA without mutating i
     const invalid = await call('inspect_binary_layout', { path: 42 });
     expect(!invalid || invalid.isError).toBeTruthy();
     await c.disconnect(); expect(c.getTools().length).toBe(catalog.length);
-    await c.connect(process.execPath, [process.env.REA_LIVE_SCRIPT!, 'mcp']);
+    await c.connect(process.execPath, [process.env.REA_LIVE_SCRIPT!, '--mcp']);
     expect(c.getTools().map(t => t.name)).toEqual(catalog.map(t => t.name));
     console.log(`REA audit artifacts: ${root}`);
     console.log(JSON.stringify(results.map(({result, ...rest}: any) => rest)));

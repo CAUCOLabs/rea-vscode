@@ -18,7 +18,7 @@ it.skipIf(!process.env.REA_BROWSER_LIVE_SCRIPT)('runs companion MCP → owned Ch
     const result = await client.callTool({ name: 'acquire_browser', arguments: { url: origin } });
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
     lease = result.structuredContent!;
-    await rea.connect(process.execPath, [process.env.REA_BROWSER_LIVE_SCRIPT!, 'mcp']);
+    await rea.connect(process.execPath, [process.env.REA_BROWSER_LIVE_SCRIPT!, '--mcp']);
     const executed: string[] = [];
     const call = async (name: string, args: Record<string, unknown>) => {
       const result = await rea.invokeTool(name, args, { timeout: 60000 }, async () => true);

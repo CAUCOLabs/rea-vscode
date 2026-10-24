@@ -37,6 +37,8 @@ describe('Web target workflow', () => {
     expect(report.findings.every(f => f.source && f.id && f.evidenceId)).toBe(true);
     expect(report.specification).toContain('PROPOSED');
     expect(report.specification).toContain('## Visual requirements');
+    expect(report.specification).toMatch(/OBSERVED \(F\d+\): Visible viewport screenshot captured/);
+    expect(report.specification).toMatch(/UNKNOWN \(F\d+\): REA 6.7.0 inspect/);
     expect(report.specification).toContain('## Resource requirements');
     expect(report.specification).toContain('## Unknown or inaccessible functionality');
     expect(report.markdown).toContain('Instructions for coding agents');

@@ -54,5 +54,5 @@ export async function detectRuntime(executable = 'node', candidates?: string[]):
 export async function resolveEngineLaunch(executable = 'node', override = '') {
   const script = engineScript(override);
   try { await access(script); } catch { throw new Error('REA packaged engine is missing. Reinstall the extension or check the optional rea.scriptPath override.'); }
-  return { command: await detectRuntime(executable), args: [script, 'mcp'] };
+  return { command: await detectRuntime(executable), args: [script, '--mcp'] };
 }

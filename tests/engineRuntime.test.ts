@@ -15,7 +15,7 @@ it('prefers the target-bundled Node runtime and resolves the packaged engine', a
   initializeEngineRuntime(extensionRoot);
   const launch = await resolveEngineLaunch();
   expect(launch.command).toBe(bundledNodePath(extensionRoot));
-  expect(launch.args).toEqual([path.join(extensionRoot, 'runtime/rea/scripts/rea.mjs'), 'mcp']);
+  expect(launch.args).toEqual([path.join(extensionRoot, 'runtime/rea/scripts/rea.mjs'), '--mcp']);
   expect(engineScript()).toBe(launch.args[0]);
   expect(await detectRuntime('node', [bundledNodePath(extensionRoot)])).toBe(bundledNodePath(extensionRoot));
 });
@@ -51,7 +51,7 @@ it('reports absent optional Wireshark tools without attempting to install them',
   const client = new Client({ name: 'rea-missing-tool-test', version: '1.0.0' });
   const transport = new StdioClientTransport({
     command: bundledNodePath(extensionRoot),
-    args: [engineScript(), 'mcp'],
+    args: [engineScript(), '--mcp'],
     env: { PATH: '', HOME: tmpdir(), TMPDIR: tmpdir(), TEMP: tmpdir() }
   });
   try {

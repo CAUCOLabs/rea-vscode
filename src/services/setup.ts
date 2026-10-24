@@ -1,7 +1,7 @@
 import { resolveEngineLaunch, detectRuntime, runtimeHelp } from './engineRuntime';
 import * as vscode from 'vscode';
 import { execFile } from 'node:child_process';
-import { validateCodexLaunch } from './agentIntegration';
+import { configureCopilot } from './agentIntegration';
 import { findBrowserExecutable } from './analysisBrowser';
 
 export async function installationDiagnostics() {
@@ -18,20 +18,20 @@ export async function installationDiagnostics() {
   return { launch, version, browser };
 }
 
-export function registerSetup(context: vscode.ExtensionContext, verifyConnection: () => Promise<boolean>) {
+export function registerSetup(context: vscode.ExtensionContext, verifyConnection: () => Promise<boolean | { toolsDiscovered: number; tool: string; invocation: unknown }>) {
   const failure = (error: unknown) => vscode.window.showErrorMessage(`REA setup: ${error instanceof Error ? error.message : 'Verification failed.'}`);
   const verify = async () => {
     const result = await installationDiagnostics();
-    if (!await verifyConnection()) throw new Error('Engine handshake failed. Check the REA output and engine dependencies, then retry.');
+    const engine = await verifyConnection();
+    if (!engine) throw new Error('Engine handshake failed. Check the REA output and engine dependencies, then retry.');
     await vscode.window.showInformationMessage(`REA connection verified. Node ${result.version}. ${result.browser ? 'Installed browser located.' : 'No compatible browser found; configure rea.browserPath for website analysis.'}`);
+    return { ...result, engine };
   };
   context.subscriptions.push(
-    vscode.commands.registerCommand('rea.diagnostics', async () => { try { await verify(); } catch (error) { await failure(error); } }),
+    vscode.commands.registerCommand('rea.diagnostics', async () => { try { return await verify(); } catch (error) { await failure(error); } }),
     vscode.commands.registerCommand('rea.configureCopilot', async () => {
       try {
-        await installationDiagnostics();
-        await vscode.window.showInformationMessage('Open MCP: List Servers and start REA full engine and REA isolated browser. Review VS Code trust prompts; Copilot must be installed and MCP enabled by your organization.');
-        await vscode.commands.executeCommand('workbench.mcp.listServer');
+        await configureCopilot();
       } catch (error) { await failure(error); }
     }),
     vscode.commands.registerCommand('rea.setup', async () => {

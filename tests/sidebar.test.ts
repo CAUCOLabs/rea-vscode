@@ -23,9 +23,19 @@ const mocks = vi.hoisted(() => ({
   writeFile: vi.fn(),
   startBrowser: vi.fn(),
   closeBrowser: vi.fn(),
+  repositoryAnalyze: vi.fn(),
+  repositoryHandoff: vi.fn(),
+  desktopDiscover: vi.fn(),
+  desktopAnalyze: vi.fn(),
+  desktopHandoff: vi.fn(),
 }));
+vi.mock('../src/services/desktopDiscovery', () => ({ discoverDesktopApplications: mocks.desktopDiscover }));
+vi.mock('../src/analysis/desktopAnalyzer', () => ({ analyzeDesktopApplication: mocks.desktopAnalyze, exportDesktopReport: () => 'desktop markdown' }));
+vi.mock('../src/services/desktopHandoff', () => ({ createDesktopHandoff: mocks.desktopHandoff }));
+vi.mock('../src/analysis/githubRepositoryAnalyzer', () => ({ analyzeGitHubRepository: mocks.repositoryAnalyze, exportRepositoryReport: () => 'repository markdown' }));
+vi.mock('../src/services/repositoryHandoff', () => ({ createRepositoryHandoff: mocks.repositoryHandoff }));
 vi.mock('../src/analysis/reconstructionProject', () => ({ createReconstructionProject: mocks.createProject }));
-vi.mock('../src/services/analysisBrowser', () => ({ AnalysisBrowserError: class extends Error {}, startAnalysisBrowser: mocks.startBrowser }));
+vi.mock('../src/services/analysisBrowser', () => ({ AnalysisBrowserError: class extends Error {}, startAnalysisBrowser: mocks.startBrowser, findBrowserExecutable: async () => '/installed/chrome' }));
 vi.mock('vscode', () => ({
   EventEmitter: class { event = vi.fn(); fire() {} dispose() {} },
   lm: { registerMcpServerDefinitionProvider: vi.fn(() => ({ dispose() {} })) },
@@ -83,6 +93,11 @@ beforeEach(() => {
   mocks.openDialog.mockResolvedValue([{ fsPath: '/chosen/parent' }]);
   mocks.createProject.mockResolvedValue('/chosen/parent/rea-reconstruction-new');
   mocks.writeFile.mockResolvedValue(undefined);
+  mocks.desktopDiscover.mockResolvedValue({ applications: [{ pid: 123, name: 'Fixture', executable: '/Applications/Fixture', launchTime: 1234, windows: [{ id: 456, title: 'Fixture' }] }], permissions: { accessibility: true, screenCapture: true }, windowServerAvailable: true, truncated: false });
+  mocks.desktopAnalyze.mockResolvedValue({ application: { name: 'Fixture', pid: 123 }, windowId: 456, accessibility: { nodes: [], status: 'captured' }, screenshot: { status: 'not-requested' } });
+  mocks.desktopHandoff.mockResolvedValue('/chosen/desktop-evidence');
+  mocks.repositoryAnalyze.mockResolvedValue({ target: 'https://github.com/example/app', commit: 'a'.repeat(40), files: [], entries: [], languages: [], frameworks: [], dependencies: [], rea: { status: 'captured' } });
+  mocks.repositoryHandoff.mockResolvedValue('/chosen/evidence');
   mocks.launch.mockResolvedValue(undefined);
   mocks.callTool.mockResolvedValue({ content: [{ type: 'text', text: 'No unknowns' }] });
 });
@@ -128,7 +143,7 @@ describe('Workspace Trust and MCP boundary', () => {
   it('reaches the existing MCP connection in a trusted workspace', async () => {
     await activate();
     await mocks.commands.get('rea.connect')!();
-    expect(mocks.transport).toHaveBeenCalledWith({ command: bundledNodePath(process.cwd()), args: [`${process.cwd()}/runtime/rea/scripts/rea.mjs`, 'mcp'], stderr: 'pipe', maxBufferSize: 64 * 1024 * 1024 });
+    expect(mocks.transport).toHaveBeenCalledWith({ command: bundledNodePath(process.cwd()), args: [`${process.cwd()}/runtime/rea/scripts/rea.mjs`, '--mcp'], stderr: 'pipe', maxBufferSize: 64 * 1024 * 1024 });
     expect(mocks.launch).toHaveBeenCalledOnce();
   });
   it('rejects all other tool names at the client boundary', async () => {
@@ -268,9 +283,9 @@ describe('Web analyzer host workflow and export', () => {
     receive({ type: 'createReconstructionProject', destination: '/injected' });
     expect(mocks.openDialog).not.toHaveBeenCalled();
     receive({ type: 'createReconstructionProject' });
-    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'projectCreated', message: expect.stringContaining('Starter project created') })));
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'projectCreated', message: expect.stringContaining('Reconstruction project created:') })));
     expect(mocks.openDialog).toHaveBeenCalledWith(expect.objectContaining({ canSelectFolders: true, canSelectFiles: false }));
-    expect(mocks.createProject).toHaveBeenCalledWith('/chosen/parent', expect.objectContaining({ status: 'captured', screenshot: expect.objectContaining({ dataBase64: expect.stringContaining('iVBOR') }) }), expect.stringMatching(/^rea-reconstruction-/));
+    expect(mocks.createProject).toHaveBeenCalledWith('/chosen/parent', expect.objectContaining({ status: 'captured', screenshot: expect.objectContaining({ dataBase64: expect.stringContaining('iVBOR') }) }), expect.stringMatching(/^rea-reconstruction-/), undefined);
     mocks.openDialog.mockResolvedValueOnce(undefined);
     receive({ type: 'createReconstructionProject' });
     await vi.waitFor(() => expect(mocks.openDialog).toHaveBeenCalledTimes(2));
@@ -364,5 +379,110 @@ describe('Simple startup and recovery', () => {
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'analysisProgress', message: expect.stringContaining('Install Google Chrome') })));
     expect(postMessage.mock.calls.some(([message]) => message.type === 'analysisReport')).toBe(false);
     expect(mocks.callTool).not.toHaveBeenCalled();
+  });
+});
+
+it('passes captured scenario evidence into the generated project for agent consumption', async () => {
+  await activate();
+  const { receive, postMessage } = await view();
+  mocks.callTool.mockImplementation(async ({ name }: { name: string }) => name === 'capture_browser_scenario'
+    ? { content: [], structuredContent: { evidence_id: 'ev_' + 'd'.repeat(64), normalized_result: { completeness: { status: 'complete' }, steps: [{ step_id: 'initial_observation', status: 'completed', artifacts: { dom: { state: 'captured', value: { text: '<main>Captured fixture</main>' } } } }] } } }
+    : webResponse(name as keyof typeof webSchemas));
+  receive({ type: 'connect' });
+  await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'connected', busy: false })));
+  receive({ type: 'analyzeWebTarget', url: webTarget });
+  await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'analysisReport' })));
+  mocks.info.mockResolvedValueOnce('Continue');
+  receive({ type: 'exploreWebInteractions' });
+  await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'scenarioEvidence', evidence: expect.objectContaining({ dom: '<main>Captured fixture</main>' }) })));
+  receive({ type: 'createReconstructionProject' });
+  await vi.waitFor(() => expect(mocks.createProject).toHaveBeenCalledWith('/chosen/parent', expect.anything(), expect.stringMatching(/^rea-reconstruction-/), expect.objectContaining({ target: webTarget, evidenceId: 'ev_' + 'd'.repeat(64), dom: '<main>Captured fixture</main>' })));
+});
+
+
+describe('GitHub repository sidebar workflow', () => {
+  it('analyzes public repository input through the bounded host service and exports its report', async () => {
+    await activate();
+    const { receive, postMessage, webview } = await view();
+    expect(webview.html).toContain('>GitHub</button>');
+    expect(webview.html).not.toContain('GitHub<span>Coming soon');
+    receive({ type: 'connect' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'connected', busy: false })));
+    receive({ type: 'analyzeGitHubRepository', url: 'https://github.com/example/app' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'repositoryReport' })));
+    expect(mocks.repositoryAnalyze).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://github.com/example/app', signal: expect.any(AbortSignal) }));
+    receive({ type: 'exportRepositoryReport' });
+    await vi.waitFor(() => expect(mocks.writeFile).toHaveBeenCalled());
+    expect(new TextDecoder().decode(mocks.writeFile.mock.calls[0][1])).toBe('repository markdown');
+    expect(mocks.startBrowser).not.toHaveBeenCalled();
+  });
+  it('blocks untrusted requests and reports service failures without showing a report', async () => {
+    await activate(); const { receive, postMessage } = await view();
+    mocks.trusted = false;
+    receive({ type: 'analyzeGitHubRepository', url: 'https://github.com/example/app' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'analysisProgress', message: expect.stringContaining('Trust') })));
+    expect(mocks.repositoryAnalyze).not.toHaveBeenCalled();
+    mocks.trusted = true;
+    receive({ type: 'connect' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'connected', busy: false })));
+    mocks.repositoryAnalyze.mockRejectedValueOnce(new Error('GitHub public API rate limit reached'));
+    receive({ type: 'analyzeGitHubRepository', url: 'https://github.com/example/app' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'analysisProgress', message: expect.stringContaining('rate limit') })));
+    expect(postMessage.mock.calls.some(([m]) => m.type === 'repositoryReport')).toBe(false);
+  });
+  it('aborts repository analysis on disconnect and rejects injected output locations', async () => {
+    await activate(); const { receive, postMessage } = await view();
+    receive({ type: 'connect' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'connected', busy: false })));
+    let operationSignal: AbortSignal | undefined;
+    mocks.repositoryAnalyze.mockImplementationOnce(async ({ signal }: { signal: AbortSignal }) => {
+      operationSignal = signal;
+      return new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }));
+    });
+    receive({ type: 'analyzeGitHubRepository', url: 'https://github.com/example/app' });
+    await vi.waitFor(() => expect(operationSignal).toBeDefined());
+    mocks.loseConnection?.();
+    await vi.waitFor(() => expect(operationSignal?.aborted).toBe(true));
+    receive({ type: 'handoffRepository', destination: '/injected' });
+    expect(mocks.repositoryHandoff).not.toHaveBeenCalled();
+    expect(postMessage.mock.calls.some(([m]) => m.type === 'repositoryReport')).toBe(false);
+  });
+});
+
+
+describe('Desktop host workflow', () => {
+  it('binds selection to discovered app/window IDs, generates evidence and exports the report', async () => {
+    await activate(); const { receive, postMessage, webview } = await view();
+    expect(webview.html).toContain('>Desktop App</button>');
+    expect(webview.html).not.toContain('Coming soon');
+    receive({ type: 'connect' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'connected', busy: false })));
+    receive({ type: 'inspectDesktop', applicationId: 'a'.repeat(24), windowId: 456, screenshot: true });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'analysisProgress', message: expect.stringContaining('Discover running') })));
+    expect(mocks.desktopAnalyze).not.toHaveBeenCalled();
+    receive({ type: 'discoverDesktop' });
+    await vi.waitFor(() => expect(postMessage.mock.calls.some(([m]) => m.type === 'desktopApplications' && m.applications.length === 1)).toBe(true));
+    const applications = postMessage.mock.calls.find(([m]) => m.type === 'desktopApplications' && m.applications.length === 1)![0].applications;
+    expect(applications[0].executable).toBeUndefined();
+    receive({ type: 'inspectDesktop', applicationId: applications[0].id, windowId: 999, screenshot: true });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', busy: false })));
+    expect(mocks.desktopAnalyze).not.toHaveBeenCalled();
+    receive({ type: 'inspectDesktop', applicationId: applications[0].id, windowId: 456, screenshot: true });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'desktopReport' })));
+    expect(mocks.desktopAnalyze).toHaveBeenCalledWith(expect.objectContaining({ application: expect.objectContaining({ pid: 123, executable: '/Applications/Fixture' }), windowId: 456, screenshot: true }));
+    receive({ type: 'exportDesktopReport' });
+    await vi.waitFor(() => expect(mocks.writeFile).toHaveBeenCalled());
+    expect(new TextDecoder().decode(mocks.writeFile.mock.calls[0][1])).toBe('desktop markdown');
+    expect(mocks.startBrowser).not.toHaveBeenCalled();
+    expect(mocks.repositoryAnalyze).not.toHaveBeenCalled();
+  });
+  it('blocks untrusted discovery and surfaces real helper errors', async () => {
+    await activate(); const { receive, postMessage } = await view();
+    mocks.trusted = false; receive({ type: 'discoverDesktop' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', busy: false })));
+    expect(mocks.desktopDiscover).not.toHaveBeenCalled();
+    mocks.trusted = true; mocks.desktopDiscover.mockRejectedValueOnce(new Error('Local macOS GUI session required'));
+    receive({ type: 'discoverDesktop' });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith({ type: 'desktopApplications', applications: [], message: 'Local macOS GUI session required' }));
   });
 });

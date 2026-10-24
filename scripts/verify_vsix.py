@@ -9,7 +9,7 @@ from pathlib import Path
 
 package = Path(sys.argv[1])
 home_pattern = re.escape(str(Path.home()).encode()) + rb"(?:/|\\)"
-allowed = re.compile(r'^(\[Content_Types\]\.xml|extension\.vsixmanifest|extension/(package\.json|readme\.md|LICENSE\.txt|LICENSE-REA|THIRD_PARTY_NOTICES\.txt|dist/(extension|browserServer)\.js|media/[^/]+\.(js|css|svg)|docs/[^/]+\.md|runtime/(rea|node)/.+))$')
+allowed = re.compile(r'^(\[Content_Types\]\.xml|extension\.vsixmanifest|extension/(package\.json|readme\.md|LICENSE\.txt|LICENSE-REA|THIRD_PARTY_NOTICES\.txt|dist/(extension|browserServer|routerServer)\.js|media/[^/]+\.(js|css|svg)|docs/[^/]+\.md|runtime/(rea|node)/.+))$')
 with zipfile.ZipFile(package) as archive:
     names = [item.filename for item in archive.infolist() if not item.is_dir()]
     assert len(names) == len(set(names)), 'Duplicate archive entries'
@@ -21,8 +21,17 @@ with zipfile.ZipFile(package) as archive:
         # are not paths embedded for this extension's users.
         assert not re.search(home_pattern, content), f'Build-machine home path in {name}'
         assert not re.search(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----\s+[A-Za-z0-9+/=\r\n]{80,}-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{35,}|sk-proj-[A-Za-z0-9_-]{40,}', content), f'Possible credential in {name}'
-    required = ['package.json', 'readme.md', 'LICENSE.txt', 'LICENSE-REA', 'THIRD_PARTY_NOTICES.txt', 'dist/extension.js', 'dist/browserServer.js', 'media/rea.svg', 'media/sidebar.js', 'media/sidebarModel.js', 'media/sidebar.css', 'media/webAnalyzer.js', 'runtime/rea/scripts/rea.mjs', 'runtime/rea/LICENSE', 'runtime/rea/THIRD_PARTY_NOTICES.md', 'runtime/rea/licenses/README.md', 'runtime/rea/distribution.json']
+    required = ['package.json', 'readme.md', 'LICENSE.txt', 'LICENSE-REA', 'THIRD_PARTY_NOTICES.txt', 'dist/extension.js', 'dist/browserServer.js', 'dist/routerServer.js', 'media/rea.svg', 'media/sidebar.js', 'media/sidebarModel.js', 'media/sidebar.css', 'media/webAnalyzer.js', 'runtime/rea/scripts/rea.mjs', 'runtime/rea/LICENSE', 'runtime/rea/THIRD_PARTY_NOTICES.md', 'runtime/rea/licenses/README.md', 'runtime/rea/distribution.json']
     assert all('extension/' + name in names for name in required), 'Required package file missing'
+    extension_bundle = archive.read('extension/dist/extension.js')
+    analyzer_ui = archive.read('extension/media/webAnalyzer.js')
+    mode_markers = {
+        'Web Analysis': [b'target-web', b'analysis-results', b'analyze-target'],
+        'GitHub Repository Analysis': [b'target-github', b'repository-results', b'analyzeGitHubRepository'],
+        'macOS Desktop Application Analysis': [b'target-desktop', b'desktop-results', b'discoverDesktopApplications', b'inspectDesktop']
+    }
+    for mode, markers in mode_markers.items():
+        assert all(marker in extension_bundle + analyzer_ui for marker in markers), f'{mode} implementation missing from VSIX'
     manifest = json.loads(archive.read('extension/package.json'))
     assert manifest['version'] == '0.4.0'
     identity = ET.fromstring(archive.read('extension.vsixmanifest')).find(

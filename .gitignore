@@ -40,3 +40,7 @@ coverage/
 
 # Generated build artifacts
 /build/
+
+# Machine-local agent launches; keep working configurations out of source control
+/.mcp.json
+/.codex/

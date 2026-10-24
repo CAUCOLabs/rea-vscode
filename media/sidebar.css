@@ -56,11 +56,11 @@ body { padding: 16px; }
 .primary-action { width: 100%; margin-top: 12px; padding: 11px; border-radius: 5px; font-weight: 600; }
 .progress-area { min-height: 44px; margin: 12px 0 20px; }
 #analysis-progress { color: var(--vscode-descriptionForeground); line-height: 1.5; margin: 0 0 8px; }
-#analysis-results { border-top: 1px solid var(--vscode-panel-border); padding-top: 18px; }
+#analysis-results, #repository-results, #desktop-results { border-top: 1px solid var(--vscode-panel-border); padding-top: 18px; }
 .result-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .result-heading h2 { margin: 0; }
 .result-badge { font-size: .8em; color: var(--vscode-descriptionForeground); }
-#report-target { overflow-wrap: anywhere; }
+#report-target, #repository-summary, #repository-handoff-status, #desktop-summary, #desktop-handoff-status { overflow-wrap: anywhere; }
 #report-readiness { line-height: 1.6; }
 .result-card { padding: 12px 0; border-bottom: 1px solid var(--vscode-panel-border); }
 .result-card h3 { font-size: 1em; margin: 0 0 7px; }
@@ -76,3 +76,7 @@ body { padding: 16px; }
 
 #screenshot-preview img { max-width:100%; height:auto; }
 #screenshot-preview p { overflow-wrap:anywhere; }
+
+#desktop-image img { max-width: 100%; height: auto; }
+#desktop-picker select { width: 100%; margin: 6px 0 12px; }
+#desktop-picker input[type="checkbox"] { width: auto; }
