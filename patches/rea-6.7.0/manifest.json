@@ -1,0 +1,36 @@
+{
+  "manifestVersion": 1,
+  "patchFormat": "exact-byte-edits-v1",
+  "package": {
+    "name": "rea-agents",
+    "version": "6.7.0",
+    "tarball": "https://registry.npmjs.org/rea-agents/-/rea-agents-6.7.0.tgz",
+    "integrity": "sha512-yhIx2ioJYYT1C/tONfYeitC6LhnKmCh+ZwRUOgYuhSc733lGhkkt73zhug9WmLgxoMdKuqIYGCoBfD4fXkOhFw==",
+    "archiveSha256": "20958a66dba1a011e50a486beb9463a343128ed368c984f94065362c13f51f90"
+  },
+  "patch": {
+    "file": "native-executable-verification.patch.json",
+    "sha256": "01dd7c213680c86ed02835c0a36a2a07aab203618f45eb7d858d52c47443d0fe"
+  },
+  "applicationOrder": [
+    {
+      "path": "bridge/native/ReaNativeUI.swift",
+      "operation": "edit",
+      "originalSha256": "4413715438ea35edf9a872dd1cd2d4d7669ec8398fe3dc904fd0efad633a4615",
+      "patchedSha256": "25a711b83945dee4ad5fd79905f07932d8f32db5c813f3a0adb19b7d7ced74d2"
+    },
+    {
+      "path": "dist/native/NativeUiHelperRuntime.js",
+      "operation": "edit",
+      "originalSha256": "c523de91f84b10ce342f804d67b5fba30d9e9c612a359fa1cb2514f90ea678e2",
+      "patchedSha256": "3970c3bf2edcedea1a5e5fa8acdcc0135cab1e6f64e71ef802245f78dc398bd6"
+    },
+    {
+      "path": "bridge/native/NativeExecutableIdentity.swift",
+      "operation": "add",
+      "originalSha256": null,
+      "patchedSha256": "8357e28e58a3b3cc818a584ac5d98372ba7218309d74ec57f55f3f8653e9c7f4",
+      "source": "NativeExecutableIdentity.swift"
+    }
+  ]
+}

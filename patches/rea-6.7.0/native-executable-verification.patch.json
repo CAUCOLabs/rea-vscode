@@ -1,0 +1,25 @@
+{
+  "format": "exact-byte-edits-v1",
+  "files": [
+    {
+      "path": "bridge/native/ReaNativeUI.swift",
+      "edits": [
+        {
+          "offset": 3051,
+          "before": "  let executableSize = (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? -1\n  guard executableSize >= 0 && executableSize <= 256 * 1024 * 1024 else { try fail(\"target-limit\", \"Running executable exceeds the 256 MiB identity-check budget\") }\n  let executableBytes = try Data(contentsOf: url, options: .mappedIfSafe)\n  guard SHA256.hash(data: executableBytes).map({ String(format: \"%02x\", $0) }).joined() == request.sha256 else {\n    try fail(\"target-mismatch\", \"Running executable bytes differ from the active target digest\")\n",
+          "after": "  do {\n    try NativeExecutableIdentityVerifier().verify(canonicalPath: canonicalExecutable, expectedSHA256: request.sha256)\n  } catch NativeExecutableIdentityError.mismatch(let message) {\n    try fail(\"target-mismatch\", message)\n  }\n  // Hashing may take time. Re-query the selected PID before any window access,\n  // observation or action, even when this is the first request without launch_time.\n  guard let currentApp = NSRunningApplication(processIdentifier: request.pid), let currentURL = currentApp.executableURL else {\n    try fail(\"target-mismatch\", \"Selected PID no longer exposes an application executable URL\")\n  }\n  guard let currentLaunch = currentApp.launchDate?.timeIntervalSince1970 else {\n    try fail(\"process-identity-unavailable\", \"Selected application no longer exposes a launch time\")\n  }\n  guard currentLaunch == launch else { try fail(\"process-replaced\", \"Selected process was replaced during executable verification\") }\n  guard let currentCanonicalPointer = realpath(currentURL.path, nil) else {\n    try fail(\"target-mismatch\", \"Running executable path can no longer be resolved\")\n  }\n  defer { free(currentCanonicalPointer) }\n  guard currentURL.path == url.path, String(cString: currentCanonicalPointer) == canonicalExecutable else {\n    try fail(\"target-mismatch\", \"Selected PID executable changed during verification\")\n"
+        }
+      ]
+    },
+    {
+      "path": "dist/native/NativeUiHelperRuntime.js",
+      "edits": [
+        {
+          "offset": 2032,
+          "before": "",
+          "after": "            fileURLToPath(new URL(\"../../bridge/native/NativeExecutableIdentity.swift\", import.meta.url)),\n"
+        }
+      ]
+    }
+  ]
+}

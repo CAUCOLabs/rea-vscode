@@ -46,7 +46,7 @@ try {
     else if (process.platform === 'win32') execFileSync('npm.cmd', args, { cwd, stdio: 'inherit', shell: true });
     else execFileSync('npm', args, { cwd, stdio: 'inherit' });
   };
-  runNpm(['pack', 'rea-agents@6.7.0', '--pack-destination', staging]);
+  runNpm(['pack', 'rea-agents@6.7.0', '--ignore-scripts', '--pack-destination', staging]);
   const packageArchive = path.join(staging, 'rea-agents-6.7.0.tgz');
   execFileSync('tar', ['-xzf', packageArchive, '-C', staging], { stdio: 'inherit' });
   const engineSource = path.join(staging, 'package');

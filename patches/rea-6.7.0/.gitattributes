@@ -1,0 +1,2 @@
+# Hash-pinned patch assets must retain identical bytes on every build platform.
+* -text

@@ -20,7 +20,7 @@
 
 **REA for VS Code** brings reverse-engineering workflows into a familiar development environment. Inspect a website, collect structured evidence, explore the architecture of a public GitHub repository, or connect an AI coding agent to the original REA engine through the **Model Context Protocol (MCP)**.
 
-The extension provides a dedicated VS Code interface and bundles the original **REA 6.7.0** engine **without modifying its source**. The extension is independent of, and not endorsed by, the upstream REA maintainer.
+The extension provides a dedicated VS Code interface and bundles **REA 6.7.0** with an [integrity-checked native executable verification patch](patches/rea-6.7.0/README.md). The extension is independent of, and not endorsed by, the upstream REA maintainer.
 
 <div align="center">
   <img src="screenshots/01-rea-overview.png" alt="REA Explorer in VS Code, showing Web, GitHub and Desktop App modes and the connection status" width="440" />
