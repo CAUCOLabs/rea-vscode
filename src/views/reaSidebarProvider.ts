@@ -226,7 +226,7 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
             if (!controller.signal.aborted && operationGeneration === this.generation && vscode.workspace.isTrusted) {
               this.desktopReport = report;
               this.send({ type: 'desktopReport', report: this.desktopPresentation(report) });
-              this.send({ type: 'analysisProgress', percent: 100, message: 'Desktop evidence collected. Review capture status, permissions and unknown functionality.' });
+              this.send({ type: 'analysisProgress', percent: 100, message: `Desktop inspection finished. Application discovered; accessibility capture: ${report.accessibility.status}; screenshot capture: ${report.screenshot.status}. No verified interactions. Review capture reasons and unknown functionality.` });
             }
           } catch (error) {
             this.send({ type: 'analysisProgress', percent: 0, message: error instanceof Error ? error.message : 'Desktop inspection failed.' });
@@ -510,6 +510,7 @@ export class ReaSidebarProvider implements vscode.WebviewViewProvider, vscode.Di
   private desktopPresentation(report: DesktopReport) {
     return { name: report.application.name, pid: report.application.pid, windowId: report.windowId,
       nodes: report.accessibility.nodes.length, accessibility: report.accessibility.status, screenshot: report.screenshot.status,
+      accessibilityReason: report.accessibility.reason, screenshotReason: report.screenshot.reason,
       image: report.screenshot.image, markdown: exportDesktopReport(report) };
   }
 

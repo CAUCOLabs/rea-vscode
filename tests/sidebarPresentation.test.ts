@@ -372,3 +372,17 @@ it('discovers and inspects only a selected Desktop application/window while reta
   send({ type: 'status', state: 'connected', trusted: false, busy: false, desktopSupported: true });
   expect(nodes['analyze-target'].disabled).toBe(true); expect(nodes['handoff-desktop'].disabled).toBe(true);
 });
+
+it('renders unavailable capture reasons as untrusted text and distinguishes discovery from observation', () => {
+  const { nodes, send } = setup();
+  const reason = '<img src=x onerror="throw 1"> target-limit & untrusted';
+  send({ type: 'desktopReport', report: { name: 'Fixture', pid: 123, windowId: 456, nodes: 0,
+    accessibility: 'unavailable', screenshot: 'unavailable', accessibilityReason: reason,
+    screenshotReason: reason + ' screenshot', markdown: 'Capture unavailable' } });
+  expect(nodes['desktop-summary'].textContent).toContain('Application discovery:');
+  expect(nodes['desktop-summary'].textContent).toContain('Accessibility capture: unavailable (0 nodes) — ' + reason);
+  expect(nodes['desktop-summary'].textContent).toContain('Screenshot capture: unavailable — ' + reason + ' screenshot');
+  expect(nodes['desktop-summary'].textContent).toContain('Verified interactions: none');
+  expect(nodes['desktop-summary'].children).toEqual([]);
+  expect(nodes['desktop-image'].children).toEqual([]);
+});

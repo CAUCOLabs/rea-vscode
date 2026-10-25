@@ -36,6 +36,8 @@ it('delegates only fixed passive observation requests to the original REA adapte
   expect(observe).toHaveBeenCalledTimes(2);
   expect(observe.mock.calls[0][0]).toMatchObject({ selection, screenshot: false, launch: options.launch });
   expect(observe.mock.calls[1][0]).toMatchObject({ selection, screenshot: true });
+  expect(report.accessibility.status).toBe('captured');
+  expect(report.screenshot.status).toBe('captured');
   expect(report.accessibility.nodes[1].actions).toEqual(['AXPress']);
   expect(report.accessibility.response).toEqual(response());
   expect(report.screenshot.image?.sha256).toBe(image.sha256);
@@ -119,4 +121,54 @@ it('strictly parses only discovered-selection desktop messages, never executable
   expect(parseSidebarMessage({ ...message, applicationId: '/tmp/target' })).toBeUndefined();
   expect(parseSidebarMessage({ ...message, windowId: -1 })).toBeUndefined();
   expect(parseSidebarMessage({ type: 'handoffDesktop', destination: '/injected' })).toBeUndefined();
+});
+
+const identityLimitError = {
+  isError: true, content: [{ type: 'text', text: 'Native capture unavailable' }],
+  structuredContent: { error: { code: 'capability_unavailable', details: {
+    provider_id: 'native-macos', operation: 'observe_native_ui',
+    reason: 'target-limit: Running executable exceeds the 256 MiB identity-check budget (selected executable)'
+  } } }
+};
+it('classifies the native identity budget precisely and preserves other error diagnostics', () => {
+  expect(desktopCaptureError(identityLimitError)).toMatchObject({ status: 'unavailable', reason: expect.stringContaining('not a macOS permission failure') });
+  for (const details of [
+    { provider_id: 'other' }, { operation: 'other' }, { reason: 'other unavailable' }
+  ]) {
+    const changed = structuredClone(identityLimitError);
+    Object.assign(changed.structuredContent.error.details, details);
+    expect(desktopCaptureError(changed).reason).not.toContain('256 MiB');
+  }
+  const otherCode = structuredClone(identityLimitError);
+  otherCode.structuredContent.error.code = 'other';
+  expect(desktopCaptureError(otherCode).reason).not.toContain('256 MiB');
+  expect(desktopCaptureError({ code: 'accessibility-denied' }).status).toBe('permission-denied');
+  expect(desktopCaptureError({ code: 'screen-recording-denied' }).status).toBe('permission-denied');
+  expect(desktopCaptureError({ code: 'unexpected-error' }).status).toBe('failed');
+});
+it('exports unavailable captures and original provider errors without screenshot artifacts', async () => {
+  const { options } = setup({ observe: async () => structuredClone(identityLimitError) });
+  const report = await analyzeDesktopApplication(options);
+  for (const capture of [report.accessibility, report.screenshot]) {
+    expect(capture.status).toBe('unavailable');
+    expect(capture.reason).toContain('256 MiB identity-verification limit');
+    expect(capture.response).toEqual(identityLimitError);
+    expect(capture.responseSha256).toBe(createHash('sha256').update(JSON.stringify(identityLimitError)).digest('hex'));
+  }
+  expect(report.accessibility.nodes).toEqual([]);
+  expect(report.screenshot.image).toBeUndefined();
+  expect(report.verifiedInteractions).toEqual([]);
+  const parent = await mkdtemp(join(tmpdir(), 'rea-desktop-unavailable-test-'));
+  try {
+    const destination = await createDesktopHandoff(parent, report);
+    expect((await readdir(destination)).sort()).toEqual(['agent-handoff.md', 'desktop-analysis.md', 'desktop-evidence.json']);
+    const evidence = JSON.parse(await readFile(join(destination, 'desktop-evidence.json'), 'utf8'));
+    expect(evidence.accessibility.response).toEqual(identityLimitError);
+    expect(evidence.screenshot.response).toEqual(identityLimitError);
+    const markdown = await readFile(join(destination, 'desktop-analysis.md'), 'utf8');
+    expect(markdown).toContain('Accessibility capture: unavailable.');
+    expect(markdown).toContain('Screenshot capture: unavailable.');
+    expect(markdown).toContain('not a macOS permission failure');
+    expect(markdown).toContain('Discovery does not establish successful UI observation');
+  } finally { await rm(parent, { recursive: true, force: true }); }
 });

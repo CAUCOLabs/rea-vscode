@@ -170,7 +170,7 @@
         byId('view-desktop').setAttribute('aria-expanded', 'false'); buttons(); break;
       case 'desktopReport': {
         const report = message.report; desktopAvailable = true;
-        byId('desktop-summary').textContent = `${report.name} · PID ${report.pid} · window ${report.windowId} · Accessibility: ${report.accessibility} (${report.nodes} nodes) · Screenshot: ${report.screenshot}. No interactions were performed.`;
+        byId('desktop-summary').textContent = `${report.name} · PID ${report.pid} · window ${report.windowId} · Application discovery: selected application/window found · Accessibility capture: ${report.accessibility} (${report.nodes} nodes)${report.accessibilityReason ? ` — ${report.accessibilityReason}` : ''} · Screenshot capture: ${report.screenshot}${report.screenshotReason ? ` — ${report.screenshotReason}` : ''}. Verified interactions: none. No interactions were performed.`;
         byId('desktop-report').textContent = report.markdown;
         const preview = byId('desktop-image'); preview.replaceChildren();
         const image = report.image;
