@@ -7,6 +7,9 @@ import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { validatePreparedRuntime } from './validate-runtime.mjs';
+import { finalizeRuntime } from './finalize-runtime.mjs';
+import { prepareReaSecurityDependencies, verifyReaSecurityDependencies } from './rea-security-dependencies.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const targetArg = process.argv.indexOf('--target');
@@ -23,7 +26,8 @@ if (`${process.platform}-${process.arch}` !== target) throw new Error(`Native en
 
 const nodeVersion = process.env.NODE_RUNTIME_VERSION || '26.8.1';
 const archiveName = `node-v${nodeVersion}-${spec.nodeArch || target}.${spec.ext}`;
-const staging = await mkdtemp(path.join(os.tmpdir(), 'rea-vscode-platform-'));
+const staging = await mkdtemp(path.join(root, '.runtime-build-'));
+let completed = false;
 try {
   const nodeBase = `https://nodejs.org/dist/v${nodeVersion}`;
   const sums = await (await fetch(`${nodeBase}/SHASUMS256.txt`)).text();
@@ -50,17 +54,28 @@ try {
   const packageArchive = path.join(staging, 'rea-agents-6.7.0.tgz');
   execFileSync('tar', ['-xzf', packageArchive, '-C', staging], { stdio: 'inherit' });
   const engineSource = path.join(staging, 'package');
-  await copyFile(path.join(root, 'build', 'rea-package-lock.json'), path.join(engineSource, 'package-lock.json'));
+  await prepareReaSecurityDependencies(engineSource);
   runNpm(['ci', '--omit=dev', '--include=optional', '--ignore-scripts'], engineSource);
-  execFileSync(process.execPath, [path.join(root, 'scripts', 'vendor-engine.mjs'), engineSource], { cwd: root, stdio: 'inherit' });
+  await verifyReaSecurityDependencies(engineSource);
+  const stagedRea = path.join(staging, 'runtime', 'rea');
+  execFileSync(
+    process.execPath,
+    [path.join(root, 'scripts', 'vendor-engine.mjs'), engineSource],
+    {
+      cwd: root,
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        REA_VENDOR_DESTINATION: stagedRea
+      }
+    }
+  );
 
   // Fail the platform build if npm omitted the native optional binary for this runner.
   const { createRequire } = await import('node:module');
-  createRequire(path.join(root, 'runtime', 'rea', 'scripts', 'rea.mjs'))('@lydell/node-pty');
+  createRequire(path.join(stagedRea, 'scripts', 'rea.mjs'))('@lydell/node-pty');
 
-  const runtimeRoot = path.join(root, 'runtime', 'node');
-  const runtimeDirectory = path.join(runtimeRoot, target);
-  await rm(runtimeRoot, { recursive: true, force: true });
+  const runtimeDirectory = path.join(staging, 'runtime', 'node', target);
   const nodeRoot = path.join(unpacked, `node-v${nodeVersion}-${spec.nodeArch || target}`);
   await mkdir(runtimeDirectory, { recursive: true });
   const executable = path.join(runtimeDirectory, ...spec.nodePath);
@@ -70,8 +85,62 @@ try {
   if (process.platform !== 'win32') await chmod(executable, 0o755);
   const runtimeVersion = execFileSync(executable, ['-p', 'process.version'], { encoding: 'utf8' }).trim();
   if (runtimeVersion !== `v${nodeVersion}`) throw new Error(`Bundled runtime reports unexpected version ${runtimeVersion}.`);
-  await writeFile(path.join(runtimeDirectory, 'distribution.json'), JSON.stringify({ version: nodeVersion, target, archive: archiveName, sha256: actual }, null, 2) + '\n');
+    const executableSha256 = createHash('sha256')
+      .update(await readFile(executable))
+      .digest('hex');
+
+  await writeFile(path.join(runtimeDirectory, 'distribution.json'), JSON.stringify({ version: nodeVersion, target, archive: archiveName, sha256: actual, executableSha256 }, null, 2) + '\n');
   console.log(`Prepared ${target}: Node ${runtimeVersion}; REA 6.7.0; @lydell/node-pty loaded.`);
+
+    const stagedRuntime = path.join(staging, 'runtime');
+
+    console.log('Validating staged runtime integrity...');
+
+    const validation = await validatePreparedRuntime(
+      stagedRuntime,
+      target
+    );
+
+    console.log(
+      `Validated ${validation.verifiedReaFiles} REA files; Node ${validation.nodeVersion}.`
+    );
+
+    const result = await finalizeRuntime({
+      projectRoot: root,
+      stagedRuntime,
+      target,
+      prepareOnly: process.env.REA_PREPARE_ONLY === '1',
+      preservePreviousRuntime:
+        process.env.REA_PRESERVE_PREVIOUS_RUNTIME === '1'
+    });
+
+    if (result.mode === 'candidate') {
+      console.log(
+        `Validated runtime candidate saved at ${result.candidatePath}`
+      );
+
+      console.log(
+        'Prepare-only mode: active runtime was not replaced.'
+      );
+    } else {
+      if (result.previousRuntimePreserved) {
+        console.log(
+          `Previous runtime preserved at ${result.backup}`
+        );
+      }
+
+      if (result.cleanupPending) {
+        console.warn(
+          'Runtime published, but previous-runtime cleanup remains pending.'
+        );
+      }
+    }
+
+  completed = true;
 } finally {
-  await rm(staging, { recursive: true, force: true });
+  if (completed) {
+    await rm(staging, { recursive: true, force: true });
+  } else {
+    console.error(`Runtime preparation failed; staging preserved at ${staging}`);
+  }
 }

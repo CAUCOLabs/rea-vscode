@@ -39,8 +39,16 @@ coverage/
 /runtime/rea/
 
 # Generated build artifacts
-/build/
+/build/*
+!/build/rea-package-lock.json
 
 # Machine-local agent launches; keep working configurations out of source control
 /.mcp.json
 /.codex/
+
+# Temporary runtime builds and recovery directories
+/.runtime-build-*/
+/.runtime-previous-*/
+
+# Validated runtime candidates awaiting publication
+/.runtime-candidates/

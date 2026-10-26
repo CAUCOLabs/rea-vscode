@@ -3,6 +3,7 @@
   "version": "0.4.0",
   "description": "Integrate REA reverse engineering and automation tools into Visual Studio Code through MCP.",
   "main": "./dist/extension.js",
+  "icon": "media/rea-icon.png",
   "directories": {
     "test": "tests"
   },

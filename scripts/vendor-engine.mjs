@@ -3,11 +3,15 @@ import { cp, mkdir, mkdtemp, readFile, writeFile, rm, readdir, rename, lstat, st
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { applyReaPatch, prepareReaPatch } from './apply-rea-patches.mjs';
+import { verifyReaSecurityDependencies, securityVersions } from './rea-security-dependencies.mjs';
 const source = path.resolve(process.argv[2] || '');
 if (!process.argv[2]) throw new Error('Usage: node scripts/vendor-engine.mjs /path/to/built/rea');
-const destination = path.resolve('runtime/rea');
+const destination = path.resolve(
+  process.env.REA_VENDOR_DESTINATION || 'runtime/rea'
+);
 if (source === destination || source.startsWith(destination + path.sep) || destination.startsWith(source + path.sep)) throw new Error('Source and destination must be separate trees');
 const pkg = JSON.parse(await readFile(path.join(source, 'package.json'), 'utf8'));
+if (pkg.reaVscodeDependencyPolicy !== undefined) await verifyReaSecurityDependencies(source);
 // Validate originals and every computed patch output before touching the destination.
 await prepareReaPatch(source);
 await mkdir(path.dirname(destination), { recursive: true });
@@ -47,13 +51,14 @@ async function dependency(name, from, destination) {
 }
 for (const name of Object.keys(pkg.dependencies)) await dependency(name, source);
 const appliedPatch = await applyReaPatch(target);
+if (pkg.reaVscodeDependencyPolicy !== undefined) await verifyReaSecurityDependencies(target);
 const files = {};
 async function inventory(dir) { for (const entry of await readdir(dir, { withFileTypes: true })) {
  const file = path.join(dir, entry.name); if (entry.isDirectory()) await inventory(file);
  else files[path.relative(target,file).split(path.sep).join('/')] = createHash('sha256').update(await readFile(file)).digest('hex');
 } }
 await inventory(target);
-await writeFile(path.join(target,'distribution.json'), JSON.stringify({ version: pkg.version, node: pkg.engines.node, platform: process.platform, arch: process.arch, excludedOptionalDependencies: ['frida'], patches: [appliedPatch], files }, null, 2));
+await writeFile(path.join(target,'distribution.json'), JSON.stringify({ version: pkg.version, node: pkg.engines.node, platform: process.platform, arch: process.arch, excludedOptionalDependencies: ['frida'], ...(pkg.reaVscodeDependencyPolicy === 1 ? { securityDependencies: securityVersions } : {}), patches: [appliedPatch], files }, null, 2));
 // Publish only a complete, patched, inventoried tree. Keep the previous tree
 // available for rollback until the staged tree has been renamed into place.
 let existing;

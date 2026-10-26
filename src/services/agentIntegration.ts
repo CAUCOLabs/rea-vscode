@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { migrateCodexLaunches } from './codexMigration';
 import { engineScript, resolveEngineLaunch } from './engineRuntime';
 import * as vscode from 'vscode';
 import * as path from 'node:path';
@@ -166,23 +168,67 @@ export function registerAgentIntegration(context: vscode.ExtensionContext) {
       const target = vscode.Uri.joinPath(directory, 'config.toml');
       let existing = '';
       let existed = false;
-      try { existing = Buffer.from(await vscode.workspace.fs.readFile(target)).toString('utf8'); existed = true; }
+      try { const bytes = Buffer.from(await vscode.workspace.fs.readFile(target)); existing = bytes.toString('utf8');
+        if (!Buffer.from(existing).equals(bytes)) throw new Error('Codex configuration is not valid UTF-8. Convert it to UTF-8 manually, then retry; no settings were written.');
+        existed = true; }
       catch (error) { if (!(error instanceof vscode.FileSystemError) || error.code !== 'FileNotFound') throw error; }
-      const merged = mergeAgentConfiguration(existing, command, args, browserScript(), command, config.get('browserPath', ''));
+      const browserArgs = config.get('browserPath', '')
+        ? [browserScript(), '--browser-executable', config.get('browserPath', '')] : [browserScript()];
+      let merged: string | undefined;
+      let updating = false;
+      try {
+        const added = mergeAgentConfiguration(existing, command, args, browserScript(), command, config.get('browserPath', ''));
+        const migrated = migrateCodexLaunches(added ?? existing, command, args, browserArgs);
+        merged = migrated ?? added;
+        const servers = parse(existing).mcp_servers as Record<string, unknown> | undefined;
+        updating = merged !== undefined && !!servers && (Object.hasOwn(servers, 'rea') || Object.hasOwn(servers, 'rea_browser'));
+      } catch (error) {
+        throw new Error(`Codex configuration could not be safely migrated. Existing settings were preserved. ${error instanceof Error ? error.message : ''} Review the TOML syntax and REA tables manually, then retry.`);
+      }
       if (merged === undefined) {
         await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(target));
-        void vscode.window.showWarningMessage('This project already defines mcp_servers.rea and mcp_servers.rea_browser. Existing settings were preserved. Edit that table manually if needed, then reload Codex in the window using this project.');
+        void vscode.window.showInformationMessage('REA MCP launch configuration is already current. Existing settings were preserved.');
         return;
       }
-      if (!vscode.workspace.isTrusted) throw new Error('REA requires a trusted window.');
-      // Detect edits made while validation/reads were pending, rather than replacing them.
-      try {
-        const current = Buffer.from(await vscode.workspace.fs.readFile(target)).toString('utf8');
-        if (!existed || current !== existing) throw new Error('Codex configuration changed. Retry; no settings were written.');
-      } catch (error) {
-        if (!(error instanceof vscode.FileSystemError) || error.code !== 'FileNotFound' || existed) throw error;
+      if (updating) {
+        const action = 'Update REA MCP configuration';
+        const chosen = await vscode.window.showWarningMessage(
+          'Update this project’s existing REA MCP launch configuration?',
+          { modal: true, detail: `This replaces command and all args (including custom launch arguments) for rea and rea_browser with:\nREA: ${command} ${JSON.stringify(args)}\nBrowser: ${command} ${JSON.stringify(browserArgs)}\nIt removes ELECTRON_RUN_AS_NODE from these entries. Other settings, including custom environment variables, timeouts and tool policies, are preserved. A backup is required before writing.` },
+          action
+        );
+        if (chosen !== action) return;
       }
+      if (!vscode.workspace.isTrusted) throw new Error('REA requires a trusted window.');
+      // Check both before and after the backup: the confirmation dialog and
+      // filesystem copy may take time. VS Code has no conditional-write API;
+      // a final read narrows, but cannot eliminate, the last read/write race.
+      const unchanged = async () => {
+        if (!vscode.workspace.isTrusted) throw new Error('REA requires a trusted window.');
+        if (vscode.workspace.textDocuments?.some(document => document.isDirty && document.uri.toString() === target.toString())) {
+          throw new Error('Codex configuration has unsaved editor changes. Save or close that editor, then retry; no settings were written.');
+        }
+        try {
+          const current = Buffer.from(await vscode.workspace.fs.readFile(target));
+          if (!existed || !current.equals(Buffer.from(existing))) throw new Error('Codex configuration changed. Retry; no settings were written.');
+        } catch (error) {
+          if (!(error instanceof vscode.FileSystemError) || error.code !== 'FileNotFound' || existed) throw error;
+        }
+      };
+      await unchanged();
       await vscode.workspace.fs.createDirectory(directory);
+      if (existed) {
+        const backup = vscode.Uri.joinPath(directory, `config.toml.rea-backup-${randomUUID()}`);
+        try {
+          await vscode.workspace.fs.copy(target, backup, { overwrite: false });
+          const bytes = await vscode.workspace.fs.readFile(backup);
+          if (!Buffer.from(bytes).equals(Buffer.from(existing))) throw new Error('Backup contents differ from the reviewed configuration.');
+        } catch (error) {
+          throw new Error(`Codex backup failed; no settings were written. Check permissions and available disk space, then retry. ${error instanceof Error ? error.message : ''}`);
+        }
+      }
+      await unchanged();
+      parse(merged);
       await vscode.workspace.fs.writeFile(target, Buffer.from(merged));
       await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(target));
       void vscode.window.showInformationMessage('REA MCP configured in the selected project. Codex must trust this project to load .codex/config.toml. Restart Codex CLI in that folder, or reload the VS Code window running Codex for that project (Developer: Reload Window). Reloading only this Extension Development Host does not reload Codex in another window.');

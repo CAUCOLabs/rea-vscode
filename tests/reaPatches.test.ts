@@ -142,6 +142,40 @@ it('vendors into a temporary destination and inventories all patched files and p
   expect(await readdir(path.join(root, 'runtime'))).toEqual(['rea']);
 });
 
+
+it('vendors REA to an isolated destination without modifying the default runtime', async () => {
+  const { root, source } = await fixture();
+  const destination = path.join(root, 'isolated-runtime', 'rea');
+
+  const before = await activeSnapshot();
+
+  await execute(
+    process.execPath,
+    [path.join(project, 'scripts/vendor-engine.mjs'), source],
+    {
+      cwd: root,
+      env: {
+        ...process.env,
+        REA_VENDOR_DESTINATION: destination
+      }
+    }
+  );
+
+  const inventory = JSON.parse(
+    await readFile(path.join(destination, 'distribution.json'), 'utf8')
+  );
+
+  expect(inventory.version).toBe('6.7.0');
+  expect(inventory.patches).toEqual([
+    expect.objectContaining({
+      id: 'rea-6.7.0/native-executable-verification'
+    })
+  ]);
+
+  expect(await activeSnapshot()).toEqual(before);
+  expect(await readdir(path.join(root, 'isolated-runtime'))).toEqual(['rea']);
+});
+
 it.each(['invalid baseline', 'missing dependency'])('preserves the destination and active runtime on vendoring failure: %s', async failure => {
   const { root, source, pkg } = await fixture();
   const destination = path.join(root, 'runtime/rea');
